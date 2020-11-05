@@ -2,7 +2,7 @@
 // @id             iitc-plugin-drone-helper@azrael-42
 // @name           IITC plugin: Drone Helper
 // @category       Misc
-// @version        0.1.0
+// @version        0.3.0
 // @updateURL      https://github.com/azrael-42/IITC-Drone-Helper/raw/master/dronehelper.user.js
 // @downloadURL    https://github.com/azrael-42/IITC-Drone-Helper/raw/master/dronehelper.user.js
 // @description    Display area drone can "see" from currently selected portal. Manually record if drone has visited portals
@@ -386,7 +386,7 @@ window.plugin.dh_sync = class {
 
   // e is null, included for backwards compatibility; either called with no parameters, or fullUpdate is true
   syncCallback(pluginName, fieldName, e, fullUpdate) {
-    console.log(new Date().toLocaleString() + ' dh_sync.syncCallback ' + this.pluginName + '.' + this.fieldName);
+    //console.log(new Date().toLocaleString() + ' dh_sync.syncCallback ' + this.pluginName + '.' + this.fieldName);
     if (fieldName === this.fieldName) {
       if (this.syncType === 'merge') this.mergeSyncData();
       else this.saveLocal();
@@ -425,7 +425,7 @@ window.plugin.dh_sync = class {
 
   // called by sync as signal it is ready to sync, also after every time it checks files for updates
   syncInitialised(pluginName,fieldName) {
-    console.log(new Date().toLocaleString() + ' dh_sync.syncInitialised ' + this.pluginName + '.' + this.fieldName);
+    //console.log(new Date().toLocaleString() + ' dh_sync.syncInitialised ' + this.pluginName + '.' + this.fieldName);
     if(fieldName === this.fieldName) {
       this.enableSync = true;
       if(this.haveChanges) {
@@ -514,13 +514,6 @@ self.findCellsCoveringCircle = function(centre, radius, cellLevel, type) {
   let includedCells = [];
   let cell = dh_S2.S2Cell.FromLatLng(centre, cellLevel);
   let queuedCells = [cell];
-
-  if (type === 'variableRadius') { // TODO
-    //let corners = cell.getCornerLatLngs();
-    //let centreLat = corners.reduce((a,b,) => a + b.lat, 0) / corners.length;
-    //let centreLng = corners.reduce((a,b) => a + b.lng, 0) / corners.length;
-    radius += (100);
-  }
 
   while (queuedCells.length > 0) {
     let nextCell = queuedCells.pop();
@@ -634,7 +627,7 @@ self.lineSegmentInsideCircle_quartered = function(centre, radius, l1, l2) {
 }
 
 self.distance = function(latlng1, latlng2) {
-  return self.haversineDistance(latlng1,latlng2);
+  return self.mercatorDistance(latlng1,latlng2);
 };
 
 self.haversineDistance = function(latlng1, latlng2) {
@@ -654,76 +647,43 @@ self.haversineDistance = function(latlng1, latlng2) {
   return d;
 }
 
-self.vincentyDistance = function(latlng1, latlng2) {
-  let lat1 = latlng1.lat, lat2 = latlng2.lat, lon1 = latlng1.lng, lon2 = latlng2.lng;
-  const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180, λ1 = lon1 * Math.PI/180,  λ2 = lon2 * Math.PI/180, R = 6371e3;
+self.mercatorDistance = function(latlng1, latlng2) {
+  let a = LatLonToMercator(latlng1.lat, latlng1.lng);
+  let b = LatLonToMercator(latlng2.lat, latlng2.lng);
 
-  const L = λ2 - λ1;
-  const a = 6378137, b = 6356752.314245, f = 1/298.257223563; // WGS84
-  //const a = 6377563.396, b = 6356256.909,    f = 1/299.3249646;   // Airy1830
-  //const a = 6377340.189, b = 6356034.448,    f = 1/299.3249646;   // AiryModified
-  //const a = 6377397.155, b = 6356078.962818, f = 1/299.1528128;   // Bessel1841
-  //const a = 6378206.4,   b = 6356583.8,      f = 1/294.978698214; // Clarke1866
-  //const a = 6378249.2,   b = 6356515.0,      f = 1/293.466021294; // Clarke1880IGN
-  //const a = 6378137,     b = 6356752.314140, f = 1/298.257222101; // GRS80
-  //const a = 6378388,     b = 6356911.946,    f = 1/297;           // Intl1924         // aka Hayford
-  //const a = 6378135,     b = 6356750.5,      f = 1/298.26;        //  WGS72
-  //const a = 6378e3, b = 6357e3, f = (a-b)/a;
+  let d = Math.sqrt((a.X-b.X)*(a.X-b.X)+(a.Y-b.Y)*(a.Y-b.Y));
+  d = d*Math.cos((latlng1.lat+latlng2.lat)/2*Math.PI/180);
+  d = Math.ceil(d * 1000)/1000;
 
+  return d;
+}
 
-  const tanU1 = (1-f) * Math.tan(φ1), cosU1 = 1 / Math.sqrt((1 + tanU1*tanU1)), sinU1 = tanU1 * cosU1;
-  const tanU2 = (1-f) * Math.tan(φ2), cosU2 = 1 / Math.sqrt((1 + tanU2*tanU2)), sinU2 = tanU2 * cosU2;
+function LatLonToMercator(lat, lon) {
 
-  let λ = L, λʹ, iterationLimit = 100;
-  let cosSqα, cos2σM, cosσ, sinσ, sinλ, cosλ, σ;
+  let rMajor = 6378137; //Equatorial Radius, WGS84
+  let shift  = Math.PI * rMajor;
+  let x      = lon * shift / 180;
+  let y      = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
+  y = y * shift / 180;
+  //y = rMajor * Math.log(Math.tan((Math.PI*0.25) + (0.5 * lat * Math.PI/180)))
 
-  do {
-    sinλ = Math.sin(λ), cosλ = Math.cos(λ);
-    const sinSqσ = (cosU2*sinλ) * (cosU2*sinλ) + (cosU1*sinU2-sinU1*cosU2*cosλ) * (cosU1*sinU2-sinU1*cosU2*cosλ);
-    sinσ = Math.sqrt(sinSqσ);
-    if (sinσ==0) return 0;  // co-incident points
-    cosσ = sinU1*sinU2 + cosU1*cosU2*cosλ;
-    σ = Math.atan2(sinσ, cosσ);
-    const sinα = cosU1 * cosU2 * sinλ / sinσ;
-    cosSqα = 1 - sinα*sinα;
-    cos2σM = cosσ - 2*sinU1*sinU2/cosSqα;
-    if (isNaN(cos2σM)) cos2σM = 0;  // equatorial line: cosSqα=0 (§6)
-    const C = f/16*cosSqα*(4+f*(4-3*cosSqα));
-    λʹ = λ;
-    λ = L + (1-C) * f * sinα * (σ + C*sinσ*(cos2σM+C*cosσ*(-1+2*cos2σM*cos2σM)));
-  } while (Math.abs(λ-λʹ) > 1e-12 && --iterationLimit>0);
-  if (iterationLimit==0) throw new Error('Formula failed to converge');
-
-  const uSq = cosSqα * (a*a - b*b) / (b*b);
-  const A = 1 + uSq/16384*(4096+uSq*(-768+uSq*(320-175*uSq)));
-  const B = uSq/1024 * (256+uSq*(-128+uSq*(74-47*uSq)));
-  const Δσ = B*sinσ*(cos2σM+B/4*(cosσ*(-1+2*cos2σM*cos2σM)-
-    B/6*cos2σM*(-3+4*sinσ*sinσ)*(-3+4*cos2σM*cos2σM)));
-
-  const s = b*A*(σ-Δσ);
-
-  const fwdAz = Math.atan2(cosU2*sinλ,  cosU1*sinU2-sinU1*cosU2*cosλ);
-  const revAz = Math.atan2(cosU1*sinλ, -sinU1*cosU2+cosU1*sinU2*cosλ);
-
-  return s;
+  return {'X': x, 'Y': y};
 }
 window.plugin.dh_view = {
 
   circles:{
     outerKey: {radius:1250, color: '#ff0000'}
   },
-  cells: {size: 16, drawOptions: {stroke:false, fillColor: '#0EC1BB', fillOpacity: 0.5, interactive: false}},
+  cells: {size: 16, drawOptions: {stroke:false, fillColor: '#0EC1BB', fillOpacity: 0.4, interactive: false}},
 
   defaultVisibilityParams: {
-        type1: { radius: 500, cellSize: 16, type: 'cover', distance: 'haversineDistance', description: 'Any cell with any part (however small) inside circle is visible; defaults: L16 cell, 500m'},
-//        type2: { radius: 500, cellSize: 16, type: 'cover', distance: 'haversineDistance', description: 'Any cell with any part (however small) inside circle is visible; defaults: L16 cell, projected max'},
-        type3: { radius: 500, cellSize: 16, type: 'cover', distance: 'vincentyDistance', description: 'Use Vincenty\'s formula for distance on ellipsoid; defaults: L16 cell, 500m'},//*/
-//        type4: { radius: 500, cellSize: 16, type: 'cover', distance: 'vincentyDistance', description: 'Use Vincenty\'s formula for distance on ellipsoid; defaults: L16 cell, projected max'},//*/
+    type1: { radius: 500, cellSize: 16, type: 'cover', distance: 'mercatorDistance', description: 'Most likely distance calculation; defaults: L16 cell, 500m'},
+    type2: { radius: 500, cellSize: 16, type: 'cover', distance: 'haversineDistance', description: 'Matches tehstone\'s plugin; defaults: L16 cell, 500m'},
   },
 
   setup: function() {
 
-    this.setDefaultParams('type3');
+    this.setDefaultParams('type1');
 
     this.layer = window.plugin.droneHelper.addNewLayerToIITC('Drone View', 'dh_view')
     window.addHook('portalSelected', this.onPortalSelected.bind(this));
@@ -794,12 +754,75 @@ window.plugin.dh_view = {
       L.polygon(corners, this.cells.drawOptions).addTo(this.layer);
     })
 
+    let visible = this.findVisiblePortals(cells);
+    let oneWay = this.findOneWayJumps(coords,visible);
+
+    this.highlightPortals(visible,oneWay);
+
     window.plugin.dh_route.layer.bringToFront();
     window.Render.prototype.bringPortalsToFront(); // See IITC code
 
   },
 
+  highlightPortals(visible,oneWay) {
+    const scale = portalMarkerScale();
+    //	 portal level		 0	1  2  3  4	5  6  7  8
+    const LEVEL_TO_WEIGHT = [2, 2, 2, 2, 2, 3, 3, 4, 4];
+    const LEVEL_TO_RADIUS = [7, 7, 7, 7, 8, 8, 9,10,11];
+    let styles = {
+      oneway: {radius:1,fill:true,color:'#ffffff',weight:1,interactive:false,clickable:false},
+      twoway: {}
+    }
 
+    for (let guid in visible) {
+      let portal = window.portals[guid];
+      if (oneWay[guid]) {
+        const level = Math.floor(portal["options"]["level"]||0);
+        const lvlWeight = LEVEL_TO_WEIGHT[level] * Math.sqrt(scale) + 1;
+        const lvlRadius = LEVEL_TO_RADIUS[level] * scale + 3;
+        this.layer.addLayer(L.circleMarker(portal._latlng, { radius: lvlRadius, fill: true, color: "red", weight: lvlWeight, interactive: false, clickable: false }));
+      } else {
+        const level = Math.floor(portal["options"]["level"]||0);
+        const lvlWeight = LEVEL_TO_WEIGHT[level] * Math.sqrt(scale) + 1;
+        const lvlRadius = LEVEL_TO_RADIUS[level] * scale + 3;
+        this.layer.addLayer(L.circleMarker(portal._latlng, { radius: lvlRadius, fill: true, color: "limegreen", weight: lvlWeight, interactive: false, clickable: false }));
+      }
+
+    }
+  },
+
+  findVisiblePortals(cells) {
+    let reachablePortals = {};
+    for (guid in window.portals) {
+      let testCell = new dh_S2.S2Cell.FromLatLng(window.portals[guid]._latlng, this.visibilityParams.cellSize);
+      for (let cell of cells) {
+        if (cell.equals(testCell)) {
+          reachablePortals[guid] = true;
+        }
+      }
+    }
+    return reachablePortals;
+  },
+
+  findOneWayJumps(coords,portals) {
+    let startCell = new dh_S2.S2Cell.FromLatLng(coords, this.visibilityParams.cellSize);
+    let oneWay = {...portals};
+
+    for (guid in portals) {
+      if (self.distance(coords,window.portals[guid]._latlng) < this.visibilityParams.radius) {
+        delete oneWay[guid];
+        continue;
+      }
+      let cells = window.plugin.droneHelper.findCellsCoveringCircle(window.portals[guid]._latlng, this.visibilityParams.radius, this.visibilityParams.cellSize, this.visibilityParams.type);
+      for (let cell of cells) {
+        if (cell.equals(startCell)) {
+          delete oneWay[guid];
+          break;
+        }
+      }
+    }
+    return oneWay;
+  }
 };
 
 

@@ -23,4 +23,3 @@ Your current route will be synced across your devices if you have the Sync plugi
 2. This plugin does not check for 1-way jumps - following the coverage tool it is possible to get stuck in an area, so if the jump you are making is outside the 500m circle, manually check you can get back again.
 3. If your key numbers reduce to 0 for a portal, or the keys plug-in refreshes all data due to sync information from a different device, the coverage tool will ask to start calculations again - it is unable to just remove the affected portal from the coverage.
 4. Coverage calculations in central London, different zoom levels found that 7,000 portals took 17 seconds and 11,000 portals took 26 seconds. 
-5. Check actual drone views and export to file - option to enable/disable in code only
