@@ -2,9 +2,10 @@
 // @id             iitc-plugin-drone-helper@azrael-42
 // @name           IITC plugin: Drone Helper
 // @category       Misc
-// @version        0.3.0
-// @updateURL      https://github.com/azrael-42/IITC-Drone-Helper/raw/master/dronehelper.user.js
-// @downloadURL    https://github.com/azrael-42/IITC-Drone-Helper/raw/master/dronehelper.user.js
+// @version        0.4.0
+// @updateURL      https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
+// @downloadURL    https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
+// @homepageURL    https://github.com/azrael-42/IITC-Drone-Helper/
 // @description    Display area drone can "see" from currently selected portal. Manually record if drone has visited portals
 // @match          https://intel.ingress.com/*
 // @grant          none
@@ -567,9 +568,7 @@ self.sortByDistance = function(comparison, latlngArray) {
 
 self.pointInCircle = function (point, centre, radius, cell) {
   let d = self.distance(centre, point);//centre.distanceTo([point.lat, point.lng])
-  if (d < 500 && d > 499) {
-    console.log(d + ' ' + centre.distanceTo([point.lat, point.lng]))
-  }
+  cell.distance = d;
   return (d < radius)
 }
 
@@ -860,13 +859,13 @@ window.plugin.dh_visits = {
     this.visitStorageHandler.loadLocal();
     this.portalUriStorageHandler.loadLocal();
 
-    this.contentHTML = '<div id="droneHelper-container">'
-      + '<label><input type="checkbox" id="droneVisit" class="droneVisit" onclick="window.plugin.dh_visits.updatePortalVisited($(this).prop(\'checked\'))">Drone Visit</label>'
+    this.contentHTML = '<div id="droneHelper-container" style="color:lightgray">'
+      + '<label><input type="checkbox" id="droneVisit" class="droneVisit" onclick="window.plugin.dh_visits.updatePortalVisited($(this).prop(\'checked\'))">Drone Visited</label>'
       + 'Total: <span class="droneTotal"></span>'
       + '</div>';
     this.disabledMessage = '<div id="droneHelper-container" class="help" title="Your browser does not support localStorage">Recording of Drone Visits Disabled</div>';
 
-    $('#toolbox').append('<a id="lastDroneVisit" href="">Last Drone Visit</a>');
+    $('#dh-toolbox').append('<span style="padding:5px;white-space: nowrap"><a id="lastDroneVisit" href="">Last Drone Visit</a></span> ');
     this.displayLastPortalLink();
 
     if (window.plugin.droneHelper.isSmart) {
@@ -912,14 +911,15 @@ window.plugin.dh_visits = {
 
   onPortalDetailsUpdated() {
     if(typeof(Storage) === "undefined") {
-      $('#portaldetails > .imgpreview').after(this.disabledMessage);
+      $('#dh-visitcount').html(this.disabledMessage);
       return;
     }
 
     let guid = window.selectedPortal,
       details = portalDetail.get(guid);
 
-    $('#portaldetails > .imgpreview').after(this.contentHTML);
+    $('#dh-visitcount').html(this.contentHTML);
+    //$('#portaldetails > .imgpreview').after(this.contentHTML);
     this.updateCheckedAndHighlight(guid);
   },
 
@@ -957,7 +957,7 @@ window.plugin.dh_visits = {
       let guid = data.portal.options.ent[0];
       let droneVisit = window.plugin.dh_visits.droneVisited[guid] ? window.plugin.dh_visits.droneVisited[guid].visited : false;
 
-      let style = {};
+      let style;
 
       if (droneVisit) {
         style = this.styles.visited;
@@ -1012,7 +1012,7 @@ window.plugin.dh_route = {
   },
 
   addRouteViewLink() {
-    $('#toolbox').append('<a id="dh-route-show" onclick="window.plugin.dh_route.showJumpList()">Show Routes</a>');
+    $('#dh-toolbox').append('<span style="padding:5px;white-space: nowrap"><a id="dh-route-show" onclick="window.plugin.dh_route.showJumpList()">Show Routes</a></span>');
   },
 
   updateKeyboardShortcut(name, value) {
@@ -1032,9 +1032,10 @@ window.plugin.dh_route = {
   onPortalDetailsUpdated() {
     if (this.disabled) return;
     let guid = window.selectedPortal;
-    let html = '<aside><a onclick="window.plugin.dh_route.addToRoute(\''+guid+'\')">Add to route</a></aside>';
+    let html = '<span class="routeAdd" style="padding:5px;white-space: nowrap"><a onclick="window.plugin.dh_route.addToRoute(\''+guid+'\')">Add to route</a></span>';
 
-    $('.linkdetails').append(html);
+    $('#dh-portal-info .routeAdd').remove();
+    $('#dh-portal-info').append(html);
   },
 
   addToRoute(guid) {
@@ -1596,6 +1597,64 @@ window.plugin.dh_coverage = {
     this.findDroneView(this.currentLocation);
   }
 }
+window.plugin.dh_distance = {
+  startPortal: null,
+
+  setup() {
+    window.addHook('portalDetailsUpdated', this.onPortalDetailsUpdated.bind(this));
+
+    this.startPortalStorageHandler = new window.plugin.dh_sync(this, 'dh_distance', 'startPortal', 'replace', false, () => {
+      if (this.startPortal !== {} && window.selectedPortal) {
+        window.renderPortalDetails (window.selectedPortal);
+      }
+    });
+    this.startPortalStorageHandler.loadLocal();
+
+    map.on('keyup', (e) => {
+      if (e.originalEvent.key === 's') { this.setStartPortal(window.selectedPortal) }
+    }, false);
+
+  },
+
+  onPortalDetailsUpdated() {
+    let guid = window.selectedPortal;
+    let html = '<span class="droneStart" style="padding:5px"><a onclick="window.plugin.dh_distance.setStartPortal(\''+guid+'\')">Set Drone Start</a></span>';
+
+    $('#dh-portal-info .droneStart').remove();
+    $('#dh-portal-info').append(html);
+
+    if (this.startPortal == null || this.startPortal === {}) return;
+    let haversine = self.haversineDistance(this.startPortal._latlng, portals[guid]._latlng);
+    if (haversine > 2000)
+      haversine = Math.floor(haversine/1000);
+    else if (haversine < 1200 || haversine >= 1300)
+      haversine = Math.floor(haversine/100)/10;
+    else if (haversine < 1240 || haversine >= 1260)
+      haversine = Math.floor(haversine/10)/100;
+    else haversine = Math.floor(haversine)/1000;
+
+    html = '<div style="padding:5px;white-space:nowrap; text-overflow:ellipsis;color:lightgray">' +
+      '<span style="color:lightgray">' + haversine + 'km</span>' +
+      ' from <a href="'+this.startPortal.uri+'">'+this.startPortal.title+'</a></div>';
+
+//    html += '<div style="white-space:nowrap; text-overflow:ellipsis;color:lightgray">Distance from <a href="'+this.startPortal.uri+'">'+this.startPortal.title+'</a><br>';
+//    html += '<span style="color:lightgray">Mercator derived: ' + (self.mercatorDistance(this.startPortal._latlng, portals[guid]._latlng))/1000 + 'km</span><br>';
+//    html += '<span style="color:lightgray">Haversine distance: ' + (self.haversineDistance(this.startPortal._latlng, portals[guid]._latlng))/1000 + 'km</span><br>';
+//    html += '</div>'
+
+    $('#dh-distance').html(html);
+
+
+  },
+
+  setStartPortal(guid) {
+    this.startPortal = {_latlng: portals[guid]._latlng, title: portals[guid].options.data.title, uri: window.makePermalink(portals[guid]._latlng)};
+    this.startPortalStorageHandler.save();
+    this.onPortalDetailsUpdated();
+    changePortalHighlights(window._current_highlighter);;
+  }
+
+}
 /**********************************************************************************************************************/
 /** SET-UP ************************************************************************************************************/
 /**********************************************************************************************************************/
@@ -1624,14 +1683,20 @@ var setup = function() {
   window.plugin.droneHelper.isSmart = window.isSmartphone();
   window.plugin.droneHelper.createOptionsDialog();
 
+  const dhControlHtml = '<div id="dh-controls" style=""><div id="dh-visitcount"></div><div id="dh-distance"></div><div id="dh-portal-info"></div><div id="dh-toolbox"></div></div>';
+  $('#portaldetails').after(dhControlHtml);
+  $('#dh-toolbox').append('<span style="padding:5px;;white-space: nowrap"><a id="dh-options" onclick="$(\'[aria-describedby=&quot;dialog-dh-options&quot;]\').show();">DroneHelper Opt</a></span> ');
+  //$('#dh-controls>a').css({padding: "5px",marginTop: "3px",marginBottom: "3px"});
+
+
   window.plugin.dh_visits.setup();
   window.plugin.dh_view.setup();
   window.plugin.dh_route.setup();
   window.plugin.dh_coverage.setup();
+  window.plugin.dh_distance.setup();
 
   window.plugin.droneHelper.setupCSS();
 
-  $('#toolbox').append('<a id="dh-options" onclick="$(\'[aria-describedby=&quot;dialog-dh-options&quot;]\').show();">DroneHelper Opt</a>');
 
 }
 

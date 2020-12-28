@@ -18,8 +18,11 @@ From the route list, you can save the current route as a named route, or manage 
 
 Your current route will be synced across your devices if you have the Sync plugin.
 
+#### Drone Distance:
+Use the "Set Drone Start" while the starting portal is selected, and after that the plugin will display estimated flight distances for each portal you select. To match the behaviour in the scanner, the distance is truncated (floor function), so if the distance between start and current portal is actually 29.7km, the distance shown will only be 29km. For portals under 2km from the set start portal, the distance will be shown with 1 or 2 decimal places - this allows checking if a portal is within 1.25km of the chosen portal, and can be used to judge if a jump is possible with an appropriate key. 
+
 #### Please note:
 1. All configuration options can be accessed from the "DroneHelper Opts" dialog
-2. This plugin does not check for 1-way jumps - following the coverage tool it is possible to get stuck in an area, so if the jump you are making is outside the 500m circle, manually check you can get back again.
+2. Coverage mapping does not check for 1-way jumps - following the coverage tool it is possible to get stuck in an area, so if the jump you are making is outside the 500m circle, manually check you can get back again. 
 3. If your key numbers reduce to 0 for a portal, or the keys plug-in refreshes all data due to sync information from a different device, the coverage tool will ask to start calculations again - it is unable to just remove the affected portal from the coverage.
 4. Coverage calculations in central London, different zoom levels found that 7,000 portals took 17 seconds and 11,000 portals took 26 seconds. 
