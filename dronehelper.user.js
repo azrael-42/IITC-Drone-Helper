@@ -2,7 +2,7 @@
 // @id             iitc-plugin-drone-helper@azrael-42
 // @name           IITC plugin: Drone Helper
 // @category       Misc
-// @version        0.4.0
+// @version        0.4.1
 // @updateURL      https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @downloadURL    https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @homepageURL    https://github.com/azrael-42/IITC-Drone-Helper/
@@ -629,9 +629,9 @@ self.distance = function(latlng1, latlng2) {
   return self.mercatorDistance(latlng1,latlng2);
 };
 
-self.haversineDistance = function(latlng1, latlng2) {
+// allow changing of radius to match observations of drone journey distance - these appear to be based on polar radius
+self.haversineDistance = function(latlng1, latlng2, R = 6371e3) {
   let lat1 = latlng1.lat, lat2 = latlng2.lat, lon1 = latlng1.lng, lon2 = latlng2.lng;
-  const R = 6371e3; // metres
   const φ1 = lat1 * Math.PI/180; // φ, λ in radians
   const φ2 = lat2 * Math.PI/180;
   const Δφ = (lat2-lat1) * Math.PI/180;
@@ -646,12 +646,25 @@ self.haversineDistance = function(latlng1, latlng2) {
   return d;
 }
 
+// distance based on a point obtained using mercator projection, corrected for latitude using average latitude of both latlngs
 self.mercatorDistance = function(latlng1, latlng2) {
   let a = LatLonToMercator(latlng1.lat, latlng1.lng);
   let b = LatLonToMercator(latlng2.lat, latlng2.lng);
 
   let d = Math.sqrt((a.X-b.X)*(a.X-b.X)+(a.Y-b.Y)*(a.Y-b.Y));
   d = d*Math.cos((latlng1.lat+latlng2.lat)/2*Math.PI/180);
+  d = Math.ceil(d * 1000)/1000;
+
+  return d;
+}
+
+// same as mercator distance except the correction for latitude is solely based on latitude of first latlng provided
+self.mercatorDistance2 = function(latlng1, latlng2) {
+  let a = LatLonToMercator(latlng1.lat, latlng1.lng);
+  let b = LatLonToMercator(latlng2.lat, latlng2.lng);
+
+  let d = Math.sqrt((a.X-b.X)*(a.X-b.X)+(a.Y-b.Y)*(a.Y-b.Y));
+  d = d*Math.cos(latlng1.lat*Math.PI/180);
   d = Math.ceil(d * 1000)/1000;
 
   return d;
@@ -1599,6 +1612,7 @@ window.plugin.dh_coverage = {
 }
 window.plugin.dh_distance = {
   startPortal: null,
+  earthRadius: 6367000,
 
   setup() {
     window.addHook('portalDetailsUpdated', this.onPortalDetailsUpdated.bind(this));
@@ -1624,7 +1638,10 @@ window.plugin.dh_distance = {
     $('#dh-portal-info').append(html);
 
     if (this.startPortal == null || this.startPortal === {}) return;
-    let haversine = self.haversineDistance(this.startPortal._latlng, portals[guid]._latlng);
+
+    // use a value of Earth's polar radius, as this is consistent with all observations in scanner made so far
+    let haversine = self.haversineDistance(this.startPortal._latlng, portals[guid]._latlng, this.earthRadius);
+
     if (haversine > 2000)
       haversine = Math.floor(haversine/1000);
     else if (haversine < 1200 || haversine >= 1300)
@@ -1637,11 +1654,6 @@ window.plugin.dh_distance = {
       '<span style="color:lightgray">' + haversine + 'km</span>' +
       ' from <a href="'+this.startPortal.uri+'">'+this.startPortal.title+'</a></div>';
 
-//    html += '<div style="white-space:nowrap; text-overflow:ellipsis;color:lightgray">Distance from <a href="'+this.startPortal.uri+'">'+this.startPortal.title+'</a><br>';
-//    html += '<span style="color:lightgray">Mercator derived: ' + (self.mercatorDistance(this.startPortal._latlng, portals[guid]._latlng))/1000 + 'km</span><br>';
-//    html += '<span style="color:lightgray">Haversine distance: ' + (self.haversineDistance(this.startPortal._latlng, portals[guid]._latlng))/1000 + 'km</span><br>';
-//    html += '</div>'
-
     $('#dh-distance').html(html);
 
 
@@ -1652,7 +1664,7 @@ window.plugin.dh_distance = {
     this.startPortalStorageHandler.save();
     this.onPortalDetailsUpdated();
     changePortalHighlights(window._current_highlighter);;
-  }
+  },
 
 }
 /**********************************************************************************************************************/

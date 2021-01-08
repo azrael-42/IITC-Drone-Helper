@@ -1,5 +1,9 @@
 # IITC-Drone-Helper
 
+#### Installation
+Requires [IITC CE](https://iitc.app/). 
+Use this link to [install Drone Helper](https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js)
+
 #### Unique Portals Drone Visited:
 Manually record portals visited by your drone. Compare the number recorded with the in app count (sometimes the Ingress app doesn't update for several jumps, so restart if the count in the scanner looks low). Use the Drone Helper highlighter to see which portals you have already visited shown on the map. Uses sync plugin to keep other devices updated.
 
