@@ -15,6 +15,8 @@ Activate the Drone View layer, and when you click on a portal the area your dron
 Ensure the Drone Coverage layer is turned on, click on the drone icon on the left to activate the coverage tool. A marker will appear on the map, centred on the selected portal (if any). To start the coverage calculation, either click on the marker if you want to leave it on the portal or drag it to where you want to start.
 
 If you have the Keys plugin, you can choose to extend the coverage if you have keys that will help.
+
+You can also choose to see where your drone could go if you had keys to every portal. This adds noticeably to the computation time required, especially in an area where there are a large number of portals that are not included in the coverage area.
 #### Drone Route:
 Ensure the Drone Route layer is active. Select a portal and click "Add to route" to add it to the route. "Show routes" brings up a list of portals - you can drag them to reorder the route or take portals out of the route. Configurable keyboard shortcuts (default to 'd' and 'r') are also available.
 

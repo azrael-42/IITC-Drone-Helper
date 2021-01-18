@@ -2,7 +2,7 @@
 // @id             iitc-plugin-drone-helper@azrael-42
 // @name           IITC plugin: Drone Helper
 // @category       Misc
-// @version        0.4.1
+// @version        0.5.1
 // @updateURL      https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @downloadURL    https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @homepageURL    https://github.com/azrael-42/IITC-Drone-Helper/
@@ -1124,7 +1124,8 @@ window.plugin.dh_route = {
     for (let i=0;i<this.currentRoute.route.length;i++)
     {
       let portal = this.currentRoute.route[i];
-      let portalLink = '?pll='+portal._latlng['lat']+','+portal._latlng['lng'];
+      let portalLink = '?pll='+portal._latlng['lat']+','+portal._latlng['lng'];  // onClick - window.zoomToAndShowPortal('b896c80588d74e1592a6780efbc2aa9b.16', [51.460452,-0.329543])
+      //let portalLink = '?pll='+portal._latlng['lat']+','+portal._latlng['lng'];
       let portalName = portals[portal.guid] ? portals[portal.guid].options.data.title : '&lt;portal not loaded&gt;';
       html +='<tr id="drone-jump-'+ i +'"><td style="cursor:grab;"><a href="' + portalLink + '">'+portalName+'</a></td>';
       //html +='<td><span class="ui-sortable-handle" style="cursor:move;">=</span></td>';
@@ -1279,6 +1280,7 @@ window.plugin.dh_coverage = {
 
 
   settings: { extendByKey: true,
+    assumeKeys: false,
     cellColouring: {
       visible:{stroke:false, fillColor: '#00ffff', fillOpacity: 0.5, interactive: false, labelText:'Cells where all portals are visible in drone view'},
       reachable:{stroke:false, fillColor: '#ff0000', fillOpacity: 0.3, interactive: false, labelText:'Cells where all portals can be reached with multiple drone moves'},
@@ -1287,6 +1289,8 @@ window.plugin.dh_coverage = {
     },
 
   },
+
+  portalStatus: {},
 
   plotReachable: false,
 
@@ -1309,7 +1313,7 @@ window.plugin.dh_coverage = {
     window.addHook('pluginKeysUpdateKey', this.keyUpdate.bind(this));
     window.addHook('pluginKeysRefreshAll', this.refreshAllKeys.bind(this));
 
-    this.settingsStorageHandler = new window.plugin.dh_sync(this, 'dh_coverage', 'keyboardShortcuts', null, false, null);
+    this.settingsStorageHandler = new window.plugin.dh_sync(this, 'dh_coverage', 'settings', null, false, null);
 
     this.settingsStorageHandler.load();
 
@@ -1317,12 +1321,14 @@ window.plugin.dh_coverage = {
     this.addLeafletControl();
 
     if (!plugin.keys) this.settings.extendByKey = false;
+    this.assumeKeys = false;
   },
 
   addCoverageOptionsToDialog() {
     let html = '<div><h4 style="margin-bottom: 0;">Drone Coverage Options</h4><br>';
     if (plugin.keys)
       html += '<div><label><input type="checkbox" name="extendByKey" '+(this.settings.extendByKey ? 'checked' : '')+' onchange="window.plugin.dh_coverage.toggleSettings(this.name)" />Use key info to extend coverage</label></div>';
+    html += '<div><label><input type="checkbox" name="assumeKeys" '+(this.settings.assumeKeys ? 'checked' : '')+' onchange="window.plugin.dh_coverage.toggleSettings(this.name)" />Assume keys are available to extend coverage. WARNING! runs slowly</label></div>';
     for (const cellType in this.settings.cellColouring) {
       if (cellType !== 'outside')
         html += '<div><label><input type="color" name="coverage-'+ cellType +'" value="'+this.settings.cellColouring[cellType].fillColor+'" onchange="window.plugin.dh_coverage.updateColour(this.name, this.value)" />'+ this.settings.cellColouring[cellType].labelText +'</label></div>';
@@ -1343,13 +1349,19 @@ window.plugin.dh_coverage = {
   },
 
   toggleSettings(name) {
-    this[name] = !this[name];
-    if (name === 'extendByKey') {
-      if (!this[name] && confirm('Restart coverage without keys (select OK) or leave any jumps relying on keys in the coverage?')) {
-        this.findDroneView();
-      } else {
-        if (this[name])
-          this.updateReachable();
+    this.settings[name] = !this.settings[name];
+    if (this.plotReachable) {
+      if (name === 'extendByKey' || name === 'assumeKeys') {
+        if (!this.settings[name] && confirm('Restart coverage without keys (select OK) or leave any jumps relying on keys in the coverage?')) {
+          this.findDroneView(this.currentLocation);
+        } else {
+          if (this.settings[name]) {
+            this.updateReachable(portals);
+            this.keyCheck();
+            this.drawReachable();
+          }
+
+        }
       }
     }
     this.settingsStorageHandler.save();
@@ -1415,7 +1427,10 @@ window.plugin.dh_coverage = {
   mapDataRefreshEnd: function() {
     console.log('map refresh start: '+(new Date().toLocaleTimeString()))
     if (!this.plotReachable) return;
+
+    this.portalsWithKeys = {};
     this.updateReachable(portals);
+    this.keyCheck();
     this.drawReachable();
     console.log('map refresh end: '+(new Date().toLocaleTimeString()))
   },
@@ -1474,7 +1489,8 @@ window.plugin.dh_coverage = {
     window.Render.prototype.bringPortalsToFront(); // See IITC code
 
     this.updateReachable(portals);
-    console.log('coverage end: '+(new Date().toLocaleTimeString()))
+    console.log('coverage end: '+(new Date().toLocaleTimeString()));
+    this.keyCheck();
     this.drawReachable(coords);
     console.log('draw end: '+(new Date().toLocaleTimeString()))
 
@@ -1493,20 +1509,22 @@ window.plugin.dh_coverage = {
   },
 
   updateReachable: function(portalList) {
+    console.log((new Date().toLocaleTimeString()),' updateReachable: ',Object.keys(portalList).length)
     let visParams = window.plugin.dh_view.visibilityParams;
 
     for (const [key, value] of Object.entries(portalList)) {
 
       let cellString = dh_S2.S2Cell.FromLatLng(value._latlng, 16).toString();
 
-      // if we have access to key data, add a portal we have keys for to the list
-      if (plugin.keys && plugin.keys.keys[key] > 0) {
-        this.portalsWithKeys[key] = value;
-      }
-
       this.addPortalToCell(cellString,key,value._latlng);
 
-      if (this.cellStatus[cellString].coverage === 'outside') continue;
+      if (this.cellStatus[cellString].coverage === 'outside') {
+        // if we have access to key data, add a portal we have keys for to the list
+        if (plugin.keys && plugin.keys.keys[key] > 0 || this.settings.assumeKeys) {
+          this.portalsWithKeys[key] = value;
+        }
+        continue;
+      }
 
       if (self.DEBUG) self.compareCoverage(value._latlng)
 
@@ -1522,17 +1540,26 @@ window.plugin.dh_coverage = {
         }
       })
     }
-    if (this.settings.extendByKey) {
+   },
+
+  keyCheck() {
+    console.log((new Date().toLocaleTimeString()),' start key check: ',Object.keys(this.portalsWithKeys).length)
+    const visParams = window.plugin.dh_view.visibilityParams;
+    let changed = false;
+    if (this.settings.extendByKey || this.settings.assumeKeys) {
       for (const guid in this.portalsWithKeys) {
         let currentCell = this.cellIdentifierFromLatLng(this.portalsWithKeys[guid]._latlng, visParams.cellSize);
+        if (this.cellStatus[currentCell].coverage === 'visible' || this.cellStatus[currentCell].coverage === 'reachable') delete this.portalsWithKeys[guid];
         if (this.cellStatus[currentCell].coverage === 'outside' && this.portalCanBeReachedByKeyJump(this.portalsWithKeys[guid]._latlng)) {
+          this.cellStatus[currentCell].coverage = 'reachable';
           this.updateReachable(this.cellStatus[currentCell].portals);
-          return;
+          changed = true;
         }
       }
     }
-   },
-
+    console.log((new Date().toLocaleTimeString()),' end key check: ',Object.keys(this.portalsWithKeys).length);
+    if (changed) this.keyCheck();
+  },
   portalCanBeReachedByKeyJump(portalLatLng) {
     let currentCell = this.cellIdentifierFromLatLng(portalLatLng, 16);
     if (this.cellStatus[currentCell].coverage !== 'outside') return false;
@@ -1546,7 +1573,9 @@ window.plugin.dh_coverage = {
       if (!this.cellStatus[testCell] || this.cellStatus[testCell].coverage === 'outside') continue;
 
       for (const [guid,portal] of Object.entries(this.cellStatus[testCell].portals)) {
-        if (self.haversineDistance(portalLatLng, portal._latlng) < 1250) { //if (portalLatLng.distanceTo(portal._latlng) < 1250) {
+        const dist = self.haversineDistance(portalLatLng, portal._latlng);
+        if (dist > 2000) continue; // no point in testing other portals in the cell if this far away
+        if (dist < 1250) { //if (portalLatLng.distanceTo(portal._latlng) < 1250) {
           this.cellStatus[currentCell].coverage = 'reachable';
           return true;
         }
@@ -1599,6 +1628,7 @@ window.plugin.dh_coverage = {
       return;
     }
     this.updateReachable({[data.guid]: portals[data.guid]});
+    this.keyCheck();
     this.drawReachable();
   },
 
@@ -1654,7 +1684,7 @@ window.plugin.dh_distance = {
       '<span style="color:lightgray">' + haversine + 'km</span>' +
       ' from <a href="'+this.startPortal.uri+'">'+this.startPortal.title+'</a></div>';
 
-    $('#dh-distance').html(html);
+    if(window.plugin.droneviewexport === undefined)  $('#dh-distance').html(html);
 
 
   },
