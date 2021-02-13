@@ -2,7 +2,7 @@
 // @id             iitc-plugin-drone-helper@azrael-42
 // @name           IITC plugin: Drone Helper
 // @category       Misc
-// @version        0.5.1
+// @version        0.5.2
 // @updateURL      https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @downloadURL    https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @homepageURL    https://github.com/azrael-42/IITC-Drone-Helper/
@@ -387,7 +387,6 @@ window.plugin.dh_sync = class {
 
   // e is null, included for backwards compatibility; either called with no parameters, or fullUpdate is true
   syncCallback(pluginName, fieldName, e, fullUpdate) {
-    //console.log(new Date().toLocaleString() + ' dh_sync.syncCallback ' + this.pluginName + '.' + this.fieldName);
     if (fieldName === this.fieldName) {
       if (this.syncType === 'merge') this.mergeSyncData();
       else this.saveLocal();
@@ -426,7 +425,6 @@ window.plugin.dh_sync = class {
 
   // called by sync as signal it is ready to sync, also after every time it checks files for updates
   syncInitialised(pluginName,fieldName) {
-    //console.log(new Date().toLocaleString() + ' dh_sync.syncInitialised ' + this.pluginName + '.' + this.fieldName);
     if(fieldName === this.fieldName) {
       this.enableSync = true;
       if(this.haveChanges) {
@@ -510,6 +508,18 @@ self.uuidv4 = function() {
   });
 }
 
+self.isPortalVisible = function(droneLocn, portalLocn) {
+  const dist = self.haversineDistance(droneLocn, portalLocn, window.plugin.dh_distance.earthRadius)
+  // any portal inside the defining circle will be visible
+  if (dist < window.plugin.dh_view.visibilityParams.radius) return true;
+  // using dimensions on https://s2geometry.io/resources/s2cell_statistics.html, it looks pretty safe to say no L16 cell will be as large as 200x200, so any portal beyond the 500m circle and the diagonal of a 200mx200m quad will not be visible
+  if (dist > Math.sqrt(200*200*2)+window.plugin.dh_view.visibilityParams.radius) return false;
+
+  let visibleCells = self.findCellsCoveringCircle(droneLocn, window.plugin.dh_view.visibilityParams.radius, 16, 'visible');
+  let portalCell = dh_S2.S2Cell.FromLatLng(portalLocn, 16);
+  return self.cellInArray(portalCell, visibleCells);
+}
+
 self.findCellsCoveringCircle = function(centre, radius, cellLevel, type) {
   let emptyCells = [];
   let includedCells = [];
@@ -520,16 +530,16 @@ self.findCellsCoveringCircle = function(centre, radius, cellLevel, type) {
     let nextCell = queuedCells.pop();
     if (self.cellInArray(nextCell,emptyCells)) continue;
     if (self.cellInArray(nextCell,includedCells)) continue;
-    if (self.cellContainsCircle(nextCell, centre, radius, type)) {
+    nextCell.visible = self.cellContainsCircle(nextCell, centre, radius, type);
+    if (nextCell.visible || type !== 'visible')
       includedCells.push(nextCell);
+    else
+      emptyCells.push(nextCell);
+    if (nextCell.visible) {
       let neighbours = nextCell.getNeighbors();
       queuedCells = queuedCells.concat(neighbours);
-    } else {
-      emptyCells.push(nextCell);
     }
   }
-  //let cellStrings = includedCells.map((cell) => { return cell.toString(); });
-  //console.log(includedCells.join("','"));
 
   return includedCells;
 }
@@ -542,24 +552,17 @@ self.cellInArray = function(cell, array) {
 }
 
 self.cellContainsCircle = function (cell, centre, radius, type) {
-  if (type === 'cover') {
-    let corners = cell.getCornerLatLngs();
-    // if a corner is in the circle, we know some part of this cell is in the circle
-    self.sortByDistance(centre,corners);
-    if (self.pointInCircle(corners[0], centre, radius, cell)) return true;
-    return self.lineSegmentInsideCircle(centre, radius, corners[0], corners[1], cell);
-  } else if (type === 'centre' || type === 'variableRadius') {
-    let corners = cell.getCornerLatLngs();
-    let centreLat = corners.reduce((a,b,) => a + b.lat, 0) / corners.length;
-    let centreLng = corners.reduce((a,b) => a + b.lng, 0) / corners.length;
-    return self.pointInCircle({lat: centreLat, lng: centreLng}, centre, radius, cell);
-  } else alert('visibility type not implemented yet');
+  let corners = cell.getCornerLatLngs();
+  // if a corner is in the circle, we know some part of this cell is in the circle
+  self.sortByDistance(centre,corners);
+  if (self.pointInCircle(corners[0], centre, radius, cell)) return true;
+  return self.lineSegmentInsideCircle(centre, radius, corners[0], corners[1], cell);
 }
 
 self.sortByDistance = function(comparison, latlngArray) {
   latlngArray.sort((l1,l2) => {
-    let d1 =self.haversineDistance(comparison,l1);//comparison.distanceTo(l1);
-    let d2 =self.haversineDistance(comparison,l2);//comparison.distanceTo(l2);
+    let d1 = (comparison.lat - l1.lat) * (comparison.lat - l1.lat) + (comparison.lng - l1.lng) * (comparison.lng - l1.lng); //  self.haversineDistance(comparison,l1);//comparison.distanceTo(l1);
+    let d2 = (comparison.lat - l2.lat) * (comparison.lat - l2.lat) + (comparison.lng - l2.lng) * (comparison.lng - l2.lng); //  self.haversineDistance(comparison,l2);//comparison.distanceTo(l2);
     if (d1 < d2) return -1;
     if (d1 > d2) return 1;
     return 0;
@@ -567,41 +570,12 @@ self.sortByDistance = function(comparison, latlngArray) {
 }
 
 self.pointInCircle = function (point, centre, radius, cell) {
-  let d = self.distance(centre, point);//centre.distanceTo([point.lat, point.lng])
+  let d = self.viewDistance(centre, point);//centre.distanceTo([point.lat, point.lng])
   cell.distance = d;
   return (d < radius)
 }
 
-self.compareCoverage = function(_latlng) {
-  let cells = [];
-  for (const type in window.plugin.dh_view.defaultVisibilityParams) {
-    let cellSet = window.plugin.droneHelper.findCellsCoveringCircle(_latlng, window.plugin.dh_view.defaultVisibilityParams[type].radius, window.plugin.dh_view.defaultVisibilityParams[type].cellSize, window.plugin.dh_view.defaultVisibilityParams[type].type);
-    cells.push(cellSet);
-  }
-  let filtered = [];
-  for (let i = 0; i < cells.length; i++) {
-    for (let j = 0; j < cells.length; j++) {
-      if (i === j) continue;
-      let difference = [];
-      for (let k = 0; k < cells[i].length; k++) {
-        if (!cells[j].some(cell => cell.equals(cells[i][k])))
-          difference.push(cells[i][k]);
-      }
-      $.extend(filtered, difference);
-    }
-  }
-  for (const [key,portal] of Object.entries(portals)) {
-    let portalCell = dh_S2.S2Cell.FromLatLng(portal._latlng, 16);
-    if (filtered.some(cell => cell.equals(portalCell))) {
-      console.log('https://intel.ingress.com/?pll=' + _latlng.lat + ',' + _latlng.lng);
-      break;
-    }
-  }
-
-}
-
 self.lineSegmentInsideCircle = function(centre, radius, l1, l2, cell) {
-
   let c = map.project(centre);
   let p1 = map.project(l1);
   let p2 = map.project(l2);
@@ -625,114 +599,92 @@ self.lineSegmentInsideCircle_quartered = function(centre, radius, l1, l2) {
   return self.pointInCircle(half, centre, radius) || self.pointInCircle(q1, centre, radius) || self.pointInCircle(q2, centre, radius);
 }
 
-self.distance = function(latlng1, latlng2) {
+self.viewDistance = function(latlng1, latlng2) {
   return self.mercatorDistance(latlng1,latlng2);
 };
 
-// allow changing of radius to match observations of drone journey distance - these appear to be based on polar radius
-self.haversineDistance = function(latlng1, latlng2, R = 6371e3) {
-  let lat1 = latlng1.lat, lat2 = latlng2.lat, lon1 = latlng1.lng, lon2 = latlng2.lng;
-  const φ1 = lat1 * Math.PI/180; // φ, λ in radians
-  const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1) * Math.PI/180;
-  const Δλ = (lon2-lon1) * Math.PI/180;
-
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-    Math.cos(φ1) * Math.cos(φ2) *
-    Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-  const d = R * c; // in metres
-  return d;
+// allow changing of radius to match observations of drone journey viewDistance - these appear to be based on polar radius
+self.haversineDistance = function(latlng1, latlng2, R) {
+  if (R === null || R === undefined || R === L.CRS.Earth.R)
+    return map.distance(latlng1,latlng2);
+  else
+    return map.distance(latlng1,latlng2) * R / L.CRS.Earth.R;
 }
 
-// distance based on a point obtained using mercator projection, corrected for latitude using average latitude of both latlngs
+// viewDistance based on a point obtained using mercator projection, corrected for latitude using average latitude of both latlngs
 self.mercatorDistance = function(latlng1, latlng2) {
-  let a = LatLonToMercator(latlng1.lat, latlng1.lng);
-  let b = LatLonToMercator(latlng2.lat, latlng2.lng);
+  let a = L.Projection.SphericalMercator.project(latlng1);
+  let b = L.Projection.SphericalMercator.project(latlng2);
 
-  let d = Math.sqrt((a.X-b.X)*(a.X-b.X)+(a.Y-b.Y)*(a.Y-b.Y));
+  let d = a.distanceTo(b); // cartesian viewDistance between 2 points
+
+  // correction for latitude
   d = d*Math.cos((latlng1.lat+latlng2.lat)/2*Math.PI/180);
+
+  // get rid of excessive decimal places
+  // d = Math.round(d * 1000)/1000; // fails at 51.510065,-0.228333
   d = Math.ceil(d * 1000)/1000;
 
   return d;
-}
-
-// same as mercator distance except the correction for latitude is solely based on latitude of first latlng provided
-self.mercatorDistance2 = function(latlng1, latlng2) {
-  let a = LatLonToMercator(latlng1.lat, latlng1.lng);
-  let b = LatLonToMercator(latlng2.lat, latlng2.lng);
-
-  let d = Math.sqrt((a.X-b.X)*(a.X-b.X)+(a.Y-b.Y)*(a.Y-b.Y));
-  d = d*Math.cos(latlng1.lat*Math.PI/180);
-  d = Math.ceil(d * 1000)/1000;
-
-  return d;
-}
-
-function LatLonToMercator(lat, lon) {
-
-  let rMajor = 6378137; //Equatorial Radius, WGS84
-  let shift  = Math.PI * rMajor;
-  let x      = lon * shift / 180;
-  let y      = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
-  y = y * shift / 180;
-  //y = rMajor * Math.log(Math.tan((Math.PI*0.25) + (0.5 * lat * Math.PI/180)))
-
-  return {'X': x, 'Y': y};
 }
 window.plugin.dh_view = {
 
   circles:{
     outerKey: {radius:1250, color: '#ff0000'}
   },
-  cells: {size: 16, drawOptions: {stroke:false, fillColor: '#0EC1BB', fillOpacity: 0.4, interactive: false}},
+  cells: {size: 16, drawOptions: {stroke:false, fillColor: '#999999', fillOpacity: 0.4, interactive: false}}, //'#0EC1BB'
 
-  defaultVisibilityParams: {
-    type1: { radius: 500, cellSize: 16, type: 'cover', distance: 'mercatorDistance', description: 'Most likely distance calculation; defaults: L16 cell, 500m'},
-    type2: { radius: 500, cellSize: 16, type: 'cover', distance: 'haversineDistance', description: 'Matches tehstone\'s plugin; defaults: L16 cell, 500m'},
+  visibilityParams: {radius: 500, cellSize: 16, type: 'cover', distance: 'mercatorDistance', description: 'Standard drone view, L16 cell, 500m circle'},
+
+  settings: {visibilityOption: 'standard'},
+
+  visibilityOptions: {
+    standard: {radius: 500, description:'500m circle - standard visibility calculation, works for most devices'},
+    lowSpec: {radius:300, description:'300m circle - smaller view area, used for some old/low spec devices'}
   },
 
   setup: function() {
 
-    this.setDefaultParams('type1');
-
     this.layer = window.plugin.droneHelper.addNewLayerToIITC('Drone View', 'dh_view')
     window.addHook('portalSelected', this.onPortalSelected.bind(this));
+
+    this.settingsStorageHandler = new window.plugin.dh_sync(this, 'dh_view', 'settings', null, false, null);
+    this.settingsStorageHandler.load();
+
+    if (this.visibilityOptions[this.settings.visibilityOption] && this.visibilityOptions[this.settings.visibilityOption].radius)
+      this.visibilityParams.radius =  this.visibilityOptions[this.settings.visibilityOption].radius
+    else
+      this.visibilityOptions[this.settings.visibilityOption].radius= this.visibilityParams.radius;
+
     this.addViewOptionsToDialog();
+    window.runHooks('droneViewSettingsChanged');
 
   },
 
   addViewOptionsToDialog() {
-    let html = '<div>Drone View Options - reachable portals<br>';
-    for (const type in this.defaultVisibilityParams) {
-      html += '<input type="radio" id="dh_vis_' + type + '" name="visType" value="' + type + '" onchange="window.plugin.dh_view.changeVisType(this.name, this.value)"';
-      if (type === this.currentVisParam)
+    let html = '<div><h4>Drone View Options - reachable portals</h4>';
+
+
+    for (const type in this.visibilityOptions) {
+      html += '<input type="radio" id="dh_vis_' + type + '" name="visRadius" value="' + type + '" onchange="window.plugin.dh_view.changeVisType(this.name, this.value)"';
+      if (this.visibilityOptions[type].radius === this.visibilityParams.radius)
         html += ' checked'
-      html += '><label for = "dh_vis_' + type + '">' + this.defaultVisibilityParams[type].description + '</label><br>';
+      html += '><label for = "dh_vis_' + type + '">' + this.visibilityOptions[type].description + '</label><br>';
     }
-    html += '<label><input id="dh_vis_radius" type="number" min="400" max="700" name="visRadius" value="' + this.visibilityParams.radius + '" onblur="window.plugin.dh_view.changeRadius(this.name, this.value)">Circle radius</label>';
     html += '</div>';
 
     $('#dialog-dh-options').append(html);
   },
 
   changeVisType(name, value) {
-    this.setDefaultParams(value);
+    if (name === 'visRadius') {
+      this.visibilityParams.radius = this.visibilityOptions[value].radius;
+      this.settings.visibilityOption = value;
+    }
+    this.settingsStorageHandler.save();
     this.drawDroneView();
-    $('#dh_vis_radius').val(this.visibilityParams.radius);
-  },
+    window.runHooks('droneViewSettingsChanged');
 
-  changeRadius(name, value) {
-    this.visibilityParams.radius = value;
-    this.drawDroneView();
-
-  },
-
-  setDefaultParams(value) {
-    this.currentVisParam = value;
-    this.visibilityParams = this.defaultVisibilityParams[value];
-    self.distance = self[this.visibilityParams.distance];
   },
 
   onPortalSelected: function (guid) {
@@ -747,7 +699,8 @@ window.plugin.dh_view = {
   },
 
   drawDroneView: function(coords) {
-    coords = coords || self.currentLocation || portals[window.selectedPortal].getLatLng();
+    coords = coords || self.currentLocation || (portals[window.selectedPortal] && portals[window.selectedPortal].getLatLng());
+//    coords = coords || self.currentLocation || portals[window.selectedPortal]?.getLatLng();
     if (!coords) { console.log('coords false'); return}
     this.layer.clearLayers();
 
@@ -762,8 +715,10 @@ window.plugin.dh_view = {
     let cells = window.plugin.droneHelper.findCellsCoveringCircle(coords, this.visibilityParams.radius, this.visibilityParams.cellSize, this.visibilityParams.type);
 
     cells.forEach(cell => {
-      let corners = cell.getCornerLatLngs();
-      L.polygon(corners, this.cells.drawOptions).addTo(this.layer);
+      if (cell.visible) {
+        let corners = cell.getCornerLatLngs();
+        L.polygon(corners, this.cells.drawOptions).addTo(this.layer);
+      }
     })
 
     let visible = this.findVisiblePortals(cells);
@@ -808,7 +763,7 @@ window.plugin.dh_view = {
     for (guid in window.portals) {
       let testCell = new dh_S2.S2Cell.FromLatLng(window.portals[guid]._latlng, this.visibilityParams.cellSize);
       for (let cell of cells) {
-        if (cell.equals(testCell)) {
+        if (cell.equals(testCell) && cell.visible) {
           reachablePortals[guid] = true;
         }
       }
@@ -821,16 +776,12 @@ window.plugin.dh_view = {
     let oneWay = {...portals};
 
     for (guid in portals) {
-      if (self.distance(coords,window.portals[guid]._latlng) < this.visibilityParams.radius) {
+      if (self.viewDistance(coords,window.portals[guid]._latlng) < this.visibilityParams.radius) {
         delete oneWay[guid];
         continue;
       }
-      let cells = window.plugin.droneHelper.findCellsCoveringCircle(window.portals[guid]._latlng, this.visibilityParams.radius, this.visibilityParams.cellSize, this.visibilityParams.type);
-      for (let cell of cells) {
-        if (cell.equals(startCell)) {
-          delete oneWay[guid];
-          break;
-        }
+      if (window.plugin.droneHelper.cellContainsCircle(startCell, window.portals[guid]._latlng, this.visibilityParams.radius, this.visibilityParams.type)) {
+        delete oneWay[guid];
       }
     }
     return oneWay;
@@ -993,7 +944,12 @@ window.plugin.dh_route = {
   currentRoute: {route:[]},
   savedRoutes: {},
 
-  keyboardShortcuts: { addPortal: 'd', showRoute: 'r' },
+  settings: { colourJumps: true,
+    keyboardShortcuts: { addPortal: 'd', showRoute: 'r' },
+  },
+
+  jumpColours: {tooLong: '#ff0000', needsKey: '#ff9900', normalJump: '#008306'},
+
 
   setup() {
     this.currentRouteStorageHandler = new window.plugin.dh_sync(this, 'dh_route', 'currentRoute', 'replace', true, () => {
@@ -1001,7 +957,7 @@ window.plugin.dh_route = {
       this.drawRoute();
     });
     this.savedRoutesStorageHandler = new window.plugin.dh_sync(this, 'dh_route', 'savedRoutes', null, true, null);
-    this.settingsStorageHandler = new window.plugin.dh_sync(this, 'dh_route', 'keyboardShortcuts', null, false, null);
+    this.settingsStorageHandler = new window.plugin.dh_sync(this, 'dh_route', 'settings', null, false, null);
 
     this.layer = window.plugin.droneHelper.addNewLayerToIITC('Drone Route', 'dh_route');
     window.addHook('portalDetailsUpdated', this.onPortalDetailsUpdated.bind(this));
@@ -1017,10 +973,13 @@ window.plugin.dh_route = {
   },
 
   addRouteOptionsToDialog() {
-    let html = '<div>Drone Route Options - keyboard shortcuts<br>' +
-      '<div><label><input name="addPortal" value="'+this.keyboardShortcuts['addPortal']+'" size="1" maxlength="1" onchange="window.plugin.dh_route.updateKeyboardShortcut(this.name, this.value)" />Add portal to current route</label></div>' +
-      '<div><label><input name="showRoute" value="'+this.keyboardShortcuts['showRoute']+'" size="1" maxlength="1" onchange="window.plugin.dh_route.updateKeyboardShortcut(this.name, this.value)" />Show routes</label></div>' +
+    let html = '<h4 style="margin-bottom:0;">Drone Route Options</h4>' +
+      '<div><label><input type="checkbox" name="colourJumps" '+(this.settings.colourJumps ? 'checked' : '')+' onchange="window.plugin.dh_route.toggleSettings(this.name)" />Colour route - within range/needs key/need more hops</label></div>' +
+      '<div>Keyboard shortcuts<br>' +
+      '<div><label><input name="addPortal" value="'+this.settings.keyboardShortcuts['addPortal']+'" size="1" maxlength="1" onchange="window.plugin.dh_route.updateKeyboardShortcut(this.name, this.value)" />Add portal to current route</label></div>' +
+      '<div><label><input name="showRoute" value="'+this.settings.keyboardShortcuts['showRoute']+'" size="1" maxlength="1" onchange="window.plugin.dh_route.updateKeyboardShortcut(this.name, this.value)" />Show routes</label></div>' +
        '</div>';
+
     $('#dialog-dh-options').append(html);
   },
 
@@ -1029,16 +988,23 @@ window.plugin.dh_route = {
   },
 
   updateKeyboardShortcut(name, value) {
-    this.keyboardShortcuts[name] = value;
+    this.settings.keyboardShortcuts[name] = value;
     this.settingsStorageHandler.save();
+  },
+
+  toggleSettings(name) {
+    this.settings[name] = !this.settings[name];
+    this.settingsStorageHandler.save();
+    if (name === 'colourJumps') this.currentRouteChanged();
+
   },
 
   addKeyboardShortcuts() {
     //document.addEventListener,map.addEventListener,this.layer.addEventListener
 
      map.on('keyup', (e) => {
-      if (e.originalEvent.key === this.keyboardShortcuts.addPortal) { this.addToRoute(window.selectedPortal); }
-      if (e.originalEvent.key === this.keyboardShortcuts.showRoute) { this.showJumpList(); }
+      if (e.originalEvent.key === this.settings.keyboardShortcuts.addPortal) { this.addToRoute(window.selectedPortal); }
+      if (e.originalEvent.key === this.settings.keyboardShortcuts.showRoute) { this.showJumpList(); }
     }, false);
   },
 
@@ -1080,7 +1046,17 @@ window.plugin.dh_route = {
 
   drawJump(startPortal, endPortal) {
     let coords = [startPortal._latlng, endPortal._latlng];
-    L.polyline(coords, {color: "#888", weight:3, opacity:1, dashArray:[20,6,15,6,10,6,5,6], clickable: false}).addTo(this.layer);
+    let colour = "#888";
+    if (this.settings.colourJumps) {
+      if (self.haversineDistance(startPortal._latlng, endPortal._latlng, window.plugin.dh_distance.earthRadius) > 1250)
+        colour = this.jumpColours.tooLong;
+      else if (self.isPortalVisible(startPortal._latlng, endPortal._latlng))
+        colour = this.jumpColours.normalJump;
+      else
+        colour = this.jumpColours.needsKey;
+    }
+
+    L.polyline(coords, {color: colour, weight:3, opacity:1, dashArray:[20,6,15,6,10,6,5,6], clickable: false}).addTo(this.layer);
   },
 
   showJumpList() {
@@ -1124,10 +1100,12 @@ window.plugin.dh_route = {
     for (let i=0;i<this.currentRoute.route.length;i++)
     {
       let portal = this.currentRoute.route[i];
-      let portalLink = '?pll='+portal._latlng['lat']+','+portal._latlng['lng'];  // onClick - window.zoomToAndShowPortal('b896c80588d74e1592a6780efbc2aa9b.16', [51.460452,-0.329543])
-      //let portalLink = '?pll='+portal._latlng['lat']+','+portal._latlng['lng'];
       let portalName = portals[portal.guid] ? portals[portal.guid].options.data.title : '&lt;portal not loaded&gt;';
-      html +='<tr id="drone-jump-'+ i +'"><td style="cursor:grab;"><a href="' + portalLink + '">'+portalName+'</a></td>';
+
+      let portalLink = '<a href="?pll='+portal._latlng['lat']+','+portal._latlng['lng'] + '">'+portalName+'</a>';
+      portalLink = '<a onclick="window.zoomToAndShowPortal(\'' + portal.guid +'\', ['+portal._latlng['lat']+','+portal._latlng['lng']+'])">'+portalName+'</a>';
+
+      html +='<tr id="drone-jump-'+ i +'"><td style="cursor:grab;">'+portalLink+'</td>';
       //html +='<td><span class="ui-sortable-handle" style="cursor:move;">=</span></td>';
       html +='<td><a onclick="window.plugin.dh_route.deletePortal('+i+');return false;">X</a></td></tr>';
     }
@@ -1307,8 +1285,6 @@ window.plugin.dh_coverage = {
       }
     });
 
-
-
     window.addHook('mapDataRefreshEnd', this.mapDataRefreshEnd.bind(this));
     window.addHook('pluginKeysUpdateKey', this.keyUpdate.bind(this));
     window.addHook('pluginKeysRefreshAll', this.refreshAllKeys.bind(this));
@@ -1325,7 +1301,7 @@ window.plugin.dh_coverage = {
   },
 
   addCoverageOptionsToDialog() {
-    let html = '<div><h4 style="margin-bottom: 0;">Drone Coverage Options</h4><br>';
+    let html = '<div><h4 style="margin-bottom:0;">Drone Coverage Options</h4>';
     if (plugin.keys)
       html += '<div><label><input type="checkbox" name="extendByKey" '+(this.settings.extendByKey ? 'checked' : '')+' onchange="window.plugin.dh_coverage.toggleSettings(this.name)" />Use key info to extend coverage</label></div>';
     html += '<div><label><input type="checkbox" name="assumeKeys" '+(this.settings.assumeKeys ? 'checked' : '')+' onchange="window.plugin.dh_coverage.toggleSettings(this.name)" />Assume keys are available to extend coverage. WARNING! runs slowly</label></div>';
@@ -1425,14 +1401,17 @@ window.plugin.dh_coverage = {
   },
 
   mapDataRefreshEnd: function() {
-    console.log('map refresh start: '+(new Date().toLocaleTimeString()))
-    if (!this.plotReachable) return;
+    const t0 = performance.now();
+    if (!this.plotReachable) {
+      return;
+    }
 
     this.portalsWithKeys = {};
     this.updateReachable(portals);
     this.keyCheck();
     this.drawReachable();
-    console.log('map refresh end: '+(new Date().toLocaleTimeString()))
+    const t1 = performance.now();
+    console.log('coverage update:',Object.entries(portals).length,' ', t1-t0);
   },
 
   onBtnClick: function() {
@@ -1475,7 +1454,6 @@ window.plugin.dh_coverage = {
   findDroneView: function(coords) {
     let visParams = window.plugin.dh_view.visibilityParams;
 
-    console.log('coverage start: '+(new Date().toLocaleTimeString()))
     this.cellStatus = {}; // expected to be 'visible', 'reachable', 'outside'
     this.portalsWithKeys = {}; // guids - true if key plugin say we have a key for the portal
 
@@ -1484,15 +1462,15 @@ window.plugin.dh_coverage = {
     cells.forEach(cell => {
       let corners = cell.getCornerLatLngs();
       L.polygon(corners, this.settings.cellColouring['visible']).addTo(this.layer);
-      this.addNewCell(cell.toString(), 'visible');
+      if (cell.visible) {
+        this.addNewCell(cell.toString(), 'visible');
+      }
     })
     window.Render.prototype.bringPortalsToFront(); // See IITC code
 
     this.updateReachable(portals);
-    console.log('coverage end: '+(new Date().toLocaleTimeString()));
     this.keyCheck();
     this.drawReachable(coords);
-    console.log('draw end: '+(new Date().toLocaleTimeString()))
 
   },
 
@@ -1509,8 +1487,7 @@ window.plugin.dh_coverage = {
   },
 
   updateReachable: function(portalList) {
-    console.log((new Date().toLocaleTimeString()),' updateReachable: ',Object.keys(portalList).length)
-    let visParams = window.plugin.dh_view.visibilityParams;
+    let {cellSize, radius, type} = window.plugin.dh_view.visibilityParams;
 
     for (const [key, value] of Object.entries(portalList)) {
 
@@ -1528,25 +1505,29 @@ window.plugin.dh_coverage = {
 
       if (self.DEBUG) self.compareCoverage(value._latlng)
 
-      let newCells = self.findCellsCoveringCircle(value._latlng, visParams.radius, visParams.cellSize, visParams.type);
+      let newCells = self.findCellsCoveringCircle(value._latlng, radius, cellSize, type);
       newCells.forEach(cell => {
-        let cellString = cell.toString();
-        if (this.cellStatus[cellString] === undefined) {
-          this.addNewCell(cellString, 'reachable');
-        }
-        if (this.cellStatus[cellString].coverage === 'outside') {
-          this.cellStatus[cellString].coverage = 'reachable';
-          this.updateReachable(this.cellStatus[cellString].portals);
+        if (cell.visible) {
+          let cellString = cell.toString();
+          if (this.cellStatus[cellString] === undefined) {
+            this.addNewCell(cellString, 'reachable');
+          }
+          if (this.cellStatus[cellString].coverage === 'outside') {
+            this.cellStatus[cellString].coverage = 'reachable';
+            this.updateReachable(this.cellStatus[cellString].portals);
+          }
         }
       })
     }
    },
 
   keyCheck() {
-    console.log((new Date().toLocaleTimeString()),' start key check: ',Object.keys(this.portalsWithKeys).length)
+    if (!(this.settings.extendByKey || this.settings.assumeKeys)) return;
+
     const visParams = window.plugin.dh_view.visibilityParams;
-    let changed = false;
-    if (this.settings.extendByKey || this.settings.assumeKeys) {
+    let changed = true;
+    while (changed) {
+      changed = false
       for (const guid in this.portalsWithKeys) {
         let currentCell = this.cellIdentifierFromLatLng(this.portalsWithKeys[guid]._latlng, visParams.cellSize);
         if (this.cellStatus[currentCell].coverage === 'visible' || this.cellStatus[currentCell].coverage === 'reachable') delete this.portalsWithKeys[guid];
@@ -1557,16 +1538,18 @@ window.plugin.dh_coverage = {
         }
       }
     }
-    console.log((new Date().toLocaleTimeString()),' end key check: ',Object.keys(this.portalsWithKeys).length);
-    if (changed) this.keyCheck();
   },
+
   portalCanBeReachedByKeyJump(portalLatLng) {
     let currentCell = this.cellIdentifierFromLatLng(portalLatLng, 16);
     if (this.cellStatus[currentCell].coverage !== 'outside') return false;
 
-    // this will be any cells that could contain portals a key distance jump away - we could get a few extra portals, but there shouldn't be too many
+    // this will be any cells that could contain portals a key viewDistance jump away - we could get a few extra portals, but there shouldn't be too many
     let keyReachableCells = self.findCellsCoveringCircle(portalLatLng, 1250, 16, 'cover');
     for (const cell of keyReachableCells) {
+      // ignore any cells not tagged as visible, as these are neighbours beyond the 1250m
+      if (!cell.visible) continue;
+
       let testCell = cell.toString();
 
       // if the cell is unknown so far, or known to be outside, there is no benefit to being able to jump from it
@@ -1574,7 +1557,6 @@ window.plugin.dh_coverage = {
 
       for (const [guid,portal] of Object.entries(this.cellStatus[testCell].portals)) {
         const dist = self.haversineDistance(portalLatLng, portal._latlng);
-        if (dist > 2000) continue; // no point in testing other portals in the cell if this far away
         if (dist < 1250) { //if (portalLatLng.distanceTo(portal._latlng) < 1250) {
           this.cellStatus[currentCell].coverage = 'reachable';
           return true;

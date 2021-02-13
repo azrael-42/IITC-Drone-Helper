@@ -20,6 +20,8 @@ You can also choose to see where your drone could go if you had keys to every po
 #### Drone Route:
 Ensure the Drone Route layer is active. Select a portal and click "Add to route" to add it to the route. "Show routes" brings up a list of portals - you can drag them to reorder the route or take portals out of the route. Configurable keyboard shortcuts (default to 'd' and 'r') are also available.
 
+Choose if the route is coloured to show the type of jump between adjacent portals - a regular jump (green), a jump needing a key (amber), or a jump that is not possible (red).
+
 From the route list, you can save the current route as a named route, or manage your named routes, including saving to/loading from JSON files.
 
 Your current route will be synced across your devices if you have the Sync plugin.
