@@ -2,7 +2,7 @@
 // @id             iitc-plugin-drone-helper@azrael-42
 // @name           IITC plugin: Drone Helper
 // @category       Misc
-// @version        0.5.2
+// @version        0.5.3
 // @updateURL      https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @downloadURL    https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @homepageURL    https://github.com/azrael-42/IITC-Drone-Helper/
@@ -476,157 +476,265 @@ window.plugin.dh_sync = class {
 }/**********************************************************************************************************************/
 /** UTILITY FUNCTIONS - used by more than one associate plug-in *******************************************************/
 /**********************************************************************************************************************/
-self.addNewLayerToIITC = function(label, name) {
-  let layer = new L.FeatureGroup();
+// record keys....
+// gets data from:
+// Live Inventory (uses inventory information made available to C.O.R.E subscribers): https://github.com/EisFrei/IngressLiveInventory/
+// Keys plug-in (uses key counts obtained from user input) - one of standard plug-ins, https://iitc.app/
 
-  window.addLayerGroup(label, layer, true)
+window.plugin.dh_utility = {
+  portalsWithKeys: {},
+  keysPluginTimeout: 400,
+  liveInventoryTimeout: 400,
 
-  map.on('layeradd', (obj) => {
-    if(obj.layer === layer) {
-      delete window.plugin[name].disabled;
-    }
-  });
-  map.on('layerremove', (obj) => {
-    if(obj.layer === layer) {
+  addNewLayerToIITC: function(label, name) {
+    let layer = new L.FeatureGroup();
+
+    window.addLayerGroup(label, layer, true)
+
+    map.on('layeradd', (obj) => {
+      if(obj.layer === layer) {
+        delete window.plugin[name].disabled;
+      }
+    });
+    map.on('layerremove', (obj) => {
+      if(obj.layer === layer) {
+        window.plugin[name].disabled = true;
+      }
+    });
+
+    // ensure 'disabled' flag is initialised
+    if (!map.hasLayer(layer)) {
       window.plugin[name].disabled = true;
     }
-  });
 
-  // ensure 'disabled' flag is initialised
-  if (!map.hasLayer(layer)) {
-    window.plugin[name].disabled = true;
-  }
+    return layer;
 
-  return layer;
+  },
 
-}
+ uuidv4: function() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  },
 
-self.uuidv4 = function() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
+  isPortalVisible: function(droneLocn, portalLocn) {
+    const dist = this.haversineDistance(droneLocn, portalLocn, window.plugin.dh_distance.earthRadius)
+    // any portal inside the defining circle will be visible
+    if (dist < window.plugin.dh_view.visibilityParams.radius) return true;
+    // using dimensions on https://s2geometry.io/resources/s2cell_statistics.html, it looks pretty safe to say no L16 cell will be as large as 200x200, so any portal beyond the 500m circle and the diagonal of a 200mx200m quad will not be visible
+    if (dist > Math.sqrt(200*200*2)+window.plugin.dh_view.visibilityParams.radius) return false;
 
-self.isPortalVisible = function(droneLocn, portalLocn) {
-  const dist = self.haversineDistance(droneLocn, portalLocn, window.plugin.dh_distance.earthRadius)
-  // any portal inside the defining circle will be visible
-  if (dist < window.plugin.dh_view.visibilityParams.radius) return true;
-  // using dimensions on https://s2geometry.io/resources/s2cell_statistics.html, it looks pretty safe to say no L16 cell will be as large as 200x200, so any portal beyond the 500m circle and the diagonal of a 200mx200m quad will not be visible
-  if (dist > Math.sqrt(200*200*2)+window.plugin.dh_view.visibilityParams.radius) return false;
+    let visibleCells = this.findCellsCoveringCircle(droneLocn, window.plugin.dh_view.visibilityParams.radius, 16, 'visible');
+    let portalCell = dh_S2.S2Cell.FromLatLng(portalLocn, 16);
+    return this.cellInArray(portalCell, visibleCells);
+  },
 
-  let visibleCells = self.findCellsCoveringCircle(droneLocn, window.plugin.dh_view.visibilityParams.radius, 16, 'visible');
-  let portalCell = dh_S2.S2Cell.FromLatLng(portalLocn, 16);
-  return self.cellInArray(portalCell, visibleCells);
-}
+  findCellsCoveringCircle: function(centre, radius, cellLevel, type) {
+    let emptyCells = [];
+    let includedCells = [];
+    let cell = dh_S2.S2Cell.FromLatLng(centre, cellLevel);
+    let queuedCells = [cell];
 
-self.findCellsCoveringCircle = function(centre, radius, cellLevel, type) {
-  let emptyCells = [];
-  let includedCells = [];
-  let cell = dh_S2.S2Cell.FromLatLng(centre, cellLevel);
-  let queuedCells = [cell];
-
-  while (queuedCells.length > 0) {
-    let nextCell = queuedCells.pop();
-    if (self.cellInArray(nextCell,emptyCells)) continue;
-    if (self.cellInArray(nextCell,includedCells)) continue;
-    nextCell.visible = self.cellContainsCircle(nextCell, centre, radius, type);
-    if (nextCell.visible || type !== 'visible')
-      includedCells.push(nextCell);
-    else
-      emptyCells.push(nextCell);
-    if (nextCell.visible) {
-      let neighbours = nextCell.getNeighbors();
-      queuedCells = queuedCells.concat(neighbours);
+    while (queuedCells.length > 0) {
+      let nextCell = queuedCells.pop();
+      if (this.cellInArray(nextCell,emptyCells)) continue;
+      if (this.cellInArray(nextCell,includedCells)) continue;
+      nextCell.visible = this.cellContainsCircle(nextCell, centre, radius, type);
+      if (nextCell.visible || type !== 'visible')
+        includedCells.push(nextCell);
+      else
+        emptyCells.push(nextCell);
+      if (nextCell.visible) {
+        let neighbours = nextCell.getNeighbors();
+        queuedCells = queuedCells.concat(neighbours);
+      }
     }
-  }
 
-  return includedCells;
-}
+    return includedCells;
+  },
 
-self.cellInArray = function(cell, array) {
-  for (let i = 0; i < array.length; i++) {
-    if (cell.equals(array[i])) return true;
-  }
-  return false;
-}
+  cellInArray: function(cell, array) {
+    for (let i = 0; i < array.length; i++) {
+      if (cell.equals(array[i])) return true;
+    }
+    return false;
+  },
 
-self.cellContainsCircle = function (cell, centre, radius, type) {
-  let corners = cell.getCornerLatLngs();
-  // if a corner is in the circle, we know some part of this cell is in the circle
-  self.sortByDistance(centre,corners);
-  if (self.pointInCircle(corners[0], centre, radius, cell)) return true;
-  return self.lineSegmentInsideCircle(centre, radius, corners[0], corners[1], cell);
-}
+  cellContainsCircle: function (cell, centre, radius, type) {
+    let corners = cell.getCornerLatLngs();
+    // if a corner is in the circle, we know some part of this cell is in the circle
+    this.sortByDistance(centre,corners);
+    if (this.pointInCircle(corners[0], centre, radius, cell)) return true;
+    return this.lineSegmentInsideCircle(centre, radius, corners[0], corners[1], cell);
+  },
 
-self.sortByDistance = function(comparison, latlngArray) {
-  latlngArray.sort((l1,l2) => {
-    let d1 = (comparison.lat - l1.lat) * (comparison.lat - l1.lat) + (comparison.lng - l1.lng) * (comparison.lng - l1.lng); //  self.haversineDistance(comparison,l1);//comparison.distanceTo(l1);
-    let d2 = (comparison.lat - l2.lat) * (comparison.lat - l2.lat) + (comparison.lng - l2.lng) * (comparison.lng - l2.lng); //  self.haversineDistance(comparison,l2);//comparison.distanceTo(l2);
-    if (d1 < d2) return -1;
-    if (d1 > d2) return 1;
-    return 0;
-  })
-}
+  sortByDistance: function(comparison, latlngArray) {
+    latlngArray.sort((l1,l2) => {
+      let d1 = (comparison.lat - l1.lat) * (comparison.lat - l1.lat) + (comparison.lng - l1.lng) * (comparison.lng - l1.lng); //  this.haversineDistance(comparison,l1);//comparison.distanceTo(l1);
+      let d2 = (comparison.lat - l2.lat) * (comparison.lat - l2.lat) + (comparison.lng - l2.lng) * (comparison.lng - l2.lng); //  this.haversineDistance(comparison,l2);//comparison.distanceTo(l2);
+      if (d1 < d2) return -1;
+      if (d1 > d2) return 1;
+      return 0;
+    })
+  },
 
-self.pointInCircle = function (point, centre, radius, cell) {
-  let d = self.viewDistance(centre, point);//centre.distanceTo([point.lat, point.lng])
-  cell.distance = d;
-  return (d < radius)
-}
+  pointInCircle: function (point, centre, radius, cell) {
+    let d = this.viewDistance(centre, point);//centre.distanceTo([point.lat, point.lng])
+    cell.distance = d;
+    return (d < radius)
+  },
 
-self.lineSegmentInsideCircle = function(centre, radius, l1, l2, cell) {
-  let c = map.project(centre);
-  let p1 = map.project(l1);
-  let p2 = map.project(l2);
-  let p = L.LineUtil.closestPointOnSegment(c,p1,p2);
+  lineSegmentInsideCircle: function(centre, radius, l1, l2, cell) {
+    let c = map.project(centre);
+    let p1 = map.project(l1);
+    let p2 = map.project(l2);
+    let p = L.LineUtil.closestPointOnSegment(c,p1,p2);
 
-  let l = map.unproject(p);
+    let l = map.unproject(p);
 
-  return self.pointInCircle(l, centre, radius, cell);
-}
+    return this.pointInCircle(l, centre, radius, cell);
+  },
 
 // I don't use this method, but at some point want to compare results
-self.lineSegmentInsideCircle_quartered = function(centre, radius, l1, l2) {
-  let half = L.latLng([(l1.lat + l2.lat)/2, (l1.lng + l2.lng)/2]);
-  let q1 = L.latLng([(half.lat + l1.lat)/2, (half.lng + l1.lng)/2]);
-  let q2 = L.latLng([(half.lat + l2.lat)/2, (half.lng + l2.lng)/2]);
+  lineSegmentInsideCircle_quartered: function(centre, radius, l1, l2) {
+    let half = L.latLng([(l1.lat + l2.lat)/2, (l1.lng + l2.lng)/2]);
+    let q1 = L.latLng([(half.lat + l1.lat)/2, (half.lng + l1.lng)/2]);
+    let q2 = L.latLng([(half.lat + l2.lat)/2, (half.lng + l2.lng)/2]);
 
-  let x = self.pointInCircle(half, centre, radius);
-  let y = self.pointInCircle(l1, centre, radius);
-  let z = self.pointInCircle(l2, centre, radius);
+    let x = this.pointInCircle(half, centre, radius);
+    let y = this.pointInCircle(l1, centre, radius);
+    let z = this.pointInCircle(l2, centre, radius);
 
-  return self.pointInCircle(half, centre, radius) || self.pointInCircle(q1, centre, radius) || self.pointInCircle(q2, centre, radius);
-}
+    return this.pointInCircle(half, centre, radius) || this.pointInCircle(q1, centre, radius) || this.pointInCircle(q2, centre, radius);
+  },
 
-self.viewDistance = function(latlng1, latlng2) {
-  return self.mercatorDistance(latlng1,latlng2);
-};
+  viewDistance: function(latlng1, latlng2) {
+    return this.mercatorDistance(latlng1,latlng2);
+  },
 
 // allow changing of radius to match observations of drone journey viewDistance - these appear to be based on polar radius
-self.haversineDistance = function(latlng1, latlng2, R) {
-  if (R === null || R === undefined || R === L.CRS.Earth.R)
-    return map.distance(latlng1,latlng2);
-  else
-    return map.distance(latlng1,latlng2) * R / L.CRS.Earth.R;
-}
+  haversineDistance: function(latlng1, latlng2, R) {
+    if (R === null || R === undefined || R === L.CRS.Earth.R)
+      return map.distance(latlng1,latlng2);
+    else
+      return map.distance(latlng1,latlng2) * R / L.CRS.Earth.R;
+  },
 
 // viewDistance based on a point obtained using mercator projection, corrected for latitude using average latitude of both latlngs
-self.mercatorDistance = function(latlng1, latlng2) {
-  let a = L.Projection.SphericalMercator.project(latlng1);
-  let b = L.Projection.SphericalMercator.project(latlng2);
+  mercatorDistance: function(latlng1, latlng2) {
+    let a = L.Projection.SphericalMercator.project(latlng1);
+    let b = L.Projection.SphericalMercator.project(latlng2);
 
-  let d = a.distanceTo(b); // cartesian viewDistance between 2 points
+    let d = a.distanceTo(b); // cartesian viewDistance between 2 points
 
-  // correction for latitude
-  d = d*Math.cos((latlng1.lat+latlng2.lat)/2*Math.PI/180);
+    // correction for latitude
+    d = d*Math.cos((latlng1.lat+latlng2.lat)/2*Math.PI/180);
 
-  // get rid of excessive decimal places
-  // d = Math.round(d * 1000)/1000; // fails at 51.510065,-0.228333
-  d = Math.ceil(d * 1000)/1000;
+    // get rid of excessive decimal places
+    // d = Math.round(d * 1000)/1000; // fails at 51.510065,-0.228333
+    d = Math.ceil(d * 1000)/1000;
 
-  return d;
+    return d;
+  },
+
+  updateKeyOwnership: function() {
+    if (self.haveKeysPlugin)
+      this.addKeysPluginInfo()
+    if (self.haveLiveInventoryPlugin)
+      console.log("liveInventory " + this.addLiveInventoryPluginInfo())
+  },
+
+  addKeysPluginInfo: function() {
+    console.log('trying to change key info')
+    let keysChanged = false;
+    if (!plugin.keys.keys) {
+      this.keysPluginTimeout += 100
+      setTimeout(this.addKeysPluginInfo, this.keysPluginTimeout)
+    } else {
+      this.keysPluginTimeout = 400
+      for (const guid in plugin.keys.keys) {
+        if (plugin.keys.keys[guid] > 0) {
+          if (this.portalsWithKeys[guid]) {
+            if (!this.portalsWithKeys[guid].keysPlugin) {
+              this.portalsWithKeys[guid].keysPlugin = true
+              keysChanged = true;
+            }
+          } else {
+            this.portalsWithKeys[guid] = {keysPlugin: true}
+            keysChanged = true;
+          }
+        }
+      }
+      for (const guid in this.portalsWithKeys) {
+        if (guid == '7aaa86c7f0304c7b8dd2208496084576.16')
+          z = 0
+        if (this.portalsWithKeys[guid].keysPlugin && !plugin.keys.keys[guid]) {
+          this.portalsWithKeys[guid].keysPlugin = false;
+          keysChanged = true
+        }
+      }
+      if (keysChanged)
+        runHooks('dh_keysChanged', '')
+    }
+  },
+
+  addLiveInventoryPluginInfo: function() {
+    let keysChanged = false;
+    if (!plugin.LiveInventory.keyCount) {
+      this.liveInventoryTimeout += 100
+      setTimeout(window.plugin.dh_utility.addLiveInventoryPluginInfo.bind(this), this.liveInventoryTimeout)
+    } else {
+      this.liveInventoryTimeout = 400
+      const keyCount = plugin.LiveInventory.keyCount;
+      keyCount.forEach(portal => {
+        if (this.portalsWithKeys[portal.portalCoupler.portalGuid]) {
+          if (!this.portalsWithKeys[portal.portalCoupler.portalGuid]) {
+            this.portalsWithKeys[portal.portalCoupler.portalGuid].liveInventory = true
+            keysChanged = true;
+          }
+        } else {
+          this.portalsWithKeys[portal.portalCoupler.portalGuid] = {liveInventory: true}
+          keysChanged = true;
+        }
+      })
+      // for (var i = 0; i < keyCount.length; i++) {
+      //   if (this.portalsWithKeys[keyCount[i].portalCoupler.portalGuid]) {
+      //     this.portalsWithKeys[keyCount[i].portalCoupler.portalGuid].liveInventory = true
+      //   } else {
+      //     this.portalsWithKeys[keyCount[i].portalCoupler.portalGuid] = {liveInventory: true}
+      //   }
+      // }
+      if (keysChanged)
+        runHooks('dh_keysChanged', '')
+    }
+  },
+
+  getPortalHasKey: function(guid, infoSource) {
+    if (this.portalsWithKeys[guid])
+      return !!this.portalsWithKeys[guid][infoSource]
+    else
+      return false
+  },
+
+  setPortalHasKey: function(guid, infoSource) {
+    if (this.portalsWithKeys[guid]) {
+      if (!this.portalsWithKeys[guid][infoSource]) {
+        this.portalsWithKeys[guid][infoSource] = true
+        return true;
+      }
+    } else {
+      this.portalsWithKeys[guid] = {}
+      this.portalsWithKeys[guid][infoSource] = true
+      return true;
+    }
+    return false
+  }
+
 }
+
+
+
 window.plugin.dh_view = {
 
   circles:{
@@ -645,7 +753,7 @@ window.plugin.dh_view = {
 
   setup: function() {
 
-    this.layer = window.plugin.droneHelper.addNewLayerToIITC('Drone View', 'dh_view')
+    this.layer = window.plugin.dh_utility.addNewLayerToIITC('Drone View', 'dh_view')
     window.addHook('portalSelected', this.onPortalSelected.bind(this));
 
     this.settingsStorageHandler = new window.plugin.dh_sync(this, 'dh_view', 'settings', null, false, null);
@@ -712,7 +820,7 @@ window.plugin.dh_view = {
     // circle to be used for constructing cells controlling visibility
     L.circle(coords, {radius: this.visibilityParams.radius, fill: false, color: '#0EC1BB', interactive: false}).addTo(this.layer);
 
-    let cells = window.plugin.droneHelper.findCellsCoveringCircle(coords, this.visibilityParams.radius, this.visibilityParams.cellSize, this.visibilityParams.type);
+    let cells = window.plugin.dh_utility.findCellsCoveringCircle(coords, this.visibilityParams.radius, this.visibilityParams.cellSize, this.visibilityParams.type);
 
     cells.forEach(cell => {
       if (cell.visible) {
@@ -776,11 +884,11 @@ window.plugin.dh_view = {
     let oneWay = {...portals};
 
     for (guid in portals) {
-      if (self.viewDistance(coords,window.portals[guid]._latlng) < this.visibilityParams.radius) {
+      if (window.plugin.dh_utility.viewDistance(coords,window.portals[guid]._latlng) < this.visibilityParams.radius) {
         delete oneWay[guid];
         continue;
       }
-      if (window.plugin.droneHelper.cellContainsCircle(startCell, window.portals[guid]._latlng, this.visibilityParams.radius, this.visibilityParams.type)) {
+      if (window.plugin.dh_utility.cellContainsCircle(startCell, window.portals[guid]._latlng, this.visibilityParams.radius, this.visibilityParams.type)) {
         delete oneWay[guid];
       }
     }
@@ -944,11 +1052,11 @@ window.plugin.dh_route = {
   currentRoute: {route:[]},
   savedRoutes: {},
 
-  settings: { colourJumps: true,
+  settings: { colourJumps: true, useLiveInventoryKeys: true, useKeysPluginKeys: true,
     keyboardShortcuts: { addPortal: 'd', showRoute: 'r' },
   },
 
-  jumpColours: {tooLong: '#ff0000', needsKey: '#ff9900', normalJump: '#008306'},
+  jumpColours: {tooLong: '#ff0000', needsKey: '#ff9900', usesOwnedKey: '#CDEF0D', normalJump: '#008306'},
 
 
   setup() {
@@ -959,8 +1067,9 @@ window.plugin.dh_route = {
     this.savedRoutesStorageHandler = new window.plugin.dh_sync(this, 'dh_route', 'savedRoutes', null, true, null);
     this.settingsStorageHandler = new window.plugin.dh_sync(this, 'dh_route', 'settings', null, false, null);
 
-    this.layer = window.plugin.droneHelper.addNewLayerToIITC('Drone Route', 'dh_route');
+    this.layer = window.plugin.dh_utility.addNewLayerToIITC('Drone Route', 'dh_route');
     window.addHook('portalDetailsUpdated', this.onPortalDetailsUpdated.bind(this));
+    window.addHook('dh_keysChanged', this.drawRoute.bind(this));
 
     this.addKeyboardShortcuts();
     this.currentRouteStorageHandler.loadLocal();
@@ -974,8 +1083,12 @@ window.plugin.dh_route = {
 
   addRouteOptionsToDialog() {
     let html = '<h4 style="margin-bottom:0;">Drone Route Options</h4>' +
-      '<div><label><input type="checkbox" name="colourJumps" '+(this.settings.colourJumps ? 'checked' : '')+' onchange="window.plugin.dh_route.toggleSettings(this.name)" />Colour route - within range/needs key/need more hops</label></div>' +
-      '<div>Keyboard shortcuts<br>' +
+      '<div><label><input type="checkbox" name="colourJumps" '+(this.settings.colourJumps ? 'checked' : '')+' onchange="window.plugin.dh_route.toggleSettings(this.name)" />Colour route - within range/needs key/need more hops</label></div>'
+      if (self.haveLiveInventoryPlugin)
+        html += '<div><label><input type="checkbox" name="useLiveInventoryKeys" '+(this.settings.useLiveInventoryKeys ? 'checked' : '')+' onchange="window.plugin.dh_route.toggleSettings(this.name)" />Change colour if LiveInventory shows a required key is owned</label></div>'
+      if (self.haveKeysPlugin)
+        html += '<div><label><input type="checkbox" name="useKeysPluginKeys" '+(this.settings.useKeysPluginKeys ? 'checked' : '')+' onchange="window.plugin.dh_route.toggleSettings(this.name)" />Change Colour if Key Plug-in shows a key is owned</label></div>'
+      html += '<div>Keyboard shortcuts<br>' +
       '<div><label><input name="addPortal" value="'+this.settings.keyboardShortcuts['addPortal']+'" size="1" maxlength="1" onchange="window.plugin.dh_route.updateKeyboardShortcut(this.name, this.value)" />Add portal to current route</label></div>' +
       '<div><label><input name="showRoute" value="'+this.settings.keyboardShortcuts['showRoute']+'" size="1" maxlength="1" onchange="window.plugin.dh_route.updateKeyboardShortcut(this.name, this.value)" />Show routes</label></div>' +
        '</div>';
@@ -996,6 +1109,8 @@ window.plugin.dh_route = {
     this.settings[name] = !this.settings[name];
     this.settingsStorageHandler.save();
     if (name === 'colourJumps') this.currentRouteChanged();
+    if (name === 'useLiveInventoryKeys') this.currentRouteChanged();
+    if (name === 'useKeysPluginKeys') this.currentRouteChanged();
 
   },
 
@@ -1022,7 +1137,7 @@ window.plugin.dh_route = {
     if(guid === undefined) guid = window.selectedPortal;
     if(guid === undefined) return;
 
-    let nextPortal = {guid:guid, _latlng: portals[guid]._latlng};
+    let nextPortal = {guid:guid, _latlng: portals[guid]._latlng, label: portals[guid].options.data.title};
     this.currentRoute.route.push(nextPortal);
     this.currentRouteChanged();
   },
@@ -1048,12 +1163,15 @@ window.plugin.dh_route = {
     let coords = [startPortal._latlng, endPortal._latlng];
     let colour = "#888";
     if (this.settings.colourJumps) {
-      if (self.haversineDistance(startPortal._latlng, endPortal._latlng, window.plugin.dh_distance.earthRadius) > 1250)
+      if (window.plugin.dh_utility.haversineDistance(startPortal._latlng, endPortal._latlng, window.plugin.dh_distance.earthRadius) > 1250)
         colour = this.jumpColours.tooLong;
-      else if (self.isPortalVisible(startPortal._latlng, endPortal._latlng))
+      else if (window.plugin.dh_utility.isPortalVisible(startPortal._latlng, endPortal._latlng))
         colour = this.jumpColours.normalJump;
-      else
+      else if ((this.settings.useLiveInventoryKeys && window.plugin.dh_utility.getPortalHasKey(endPortal.guid, 'liveInventory')) || (this.settings.useKeysPluginKeys && self.getPortalHasKey(endPortal.guid, 'keysPlugin'))) {
+        colour = this.jumpColours.usesOwnedKey;
+      } else {
         colour = this.jumpColours.needsKey;
+      }
     }
 
     L.polyline(coords, {color: colour, weight:3, opacity:1, dashArray:[20,6,15,6,10,6,5,6], clickable: false}).addTo(this.layer);
@@ -1100,7 +1218,10 @@ window.plugin.dh_route = {
     for (let i=0;i<this.currentRoute.route.length;i++)
     {
       let portal = this.currentRoute.route[i];
-      let portalName = portals[portal.guid] ? portals[portal.guid].options.data.title : '&lt;portal not loaded&gt;';
+      if (!this.currentRoute.route[i].label)
+        this.currentRoute.route[i].label = portals[portal.guid] ? portals[portal.guid].options.data.title : null;
+
+      let portalName =this.currentRoute.route[i].label ? this.currentRoute.route[i].label : '&lt;portal not loaded&gt;';
 
       let portalLink = '<a href="?pll='+portal._latlng['lat']+','+portal._latlng['lng'] + '">'+portalName+'</a>';
       portalLink = '<a onclick="window.zoomToAndShowPortal(\'' + portal.guid +'\', ['+portal._latlng['lat']+','+portal._latlng['lng']+'])">'+portalName+'</a>';
@@ -1137,7 +1258,7 @@ window.plugin.dh_route = {
 
   saveRoute() {
     let routeName = prompt('Name for this route:', new Date().toLocaleString());
-    let routeId = window.plugin.droneHelper.uuidv4();
+    let routeId = window.plugin.dh_utility.uuidv4();
     this.savedRoutes[routeId] = {name: routeName, route:this.currentRoute.route};
     this.routesChanged();
   },
@@ -1217,7 +1338,7 @@ window.plugin.dh_route = {
             if (!valid) return alert("Invalid route import");
           }
 
-          this.savedRoutes[window.plugin.droneHelper.uuidv4()] = route;
+          this.savedRoutes[window.plugin.dh_utility.uuidv4()] = route;
           this.routesChanged();
 
         });
@@ -1257,7 +1378,9 @@ window.plugin.dh_coverage = {
   },
 
 
-  settings: { extendByKey: true,
+  settings: {
+    extendByKeysPlugin: true,
+    extendByLiveInventoryPlugin: true,
     assumeKeys: false,
     cellColouring: {
       visible:{stroke:false, fillColor: '#00ffff', fillOpacity: 0.5, interactive: false, labelText:'Cells where all portals are visible in drone view'},
@@ -1268,12 +1391,10 @@ window.plugin.dh_coverage = {
 
   },
 
-  portalStatus: {},
-
   plotReachable: false,
 
   setup: function() {
-    this.layer = window.plugin.droneHelper.addNewLayerToIITC('Drone Coverage', 'dh_coverage');
+    this.layer = window.plugin.dh_utility.addNewLayerToIITC('Drone Coverage', 'dh_coverage');
     map.on('layeradd', (obj) => {
       if(obj.layer === this.layer) {
         $('.leaflet-control-droneHelper').show();
@@ -1296,14 +1417,17 @@ window.plugin.dh_coverage = {
     this.addCoverageOptionsToDialog();
     this.addLeafletControl();
 
-    if (!plugin.keys) this.settings.extendByKey = false;
+    if (!self.haveKeysPlugin) this.settings.extendByKeysPlugin = false;
+    if (!self.haveLiveInventoryPlugin) this.settings.extendByLiveInventoryPlugin = false;
     this.assumeKeys = false;
   },
 
   addCoverageOptionsToDialog() {
     let html = '<div><h4 style="margin-bottom:0;">Drone Coverage Options</h4>';
-    if (plugin.keys)
-      html += '<div><label><input type="checkbox" name="extendByKey" '+(this.settings.extendByKey ? 'checked' : '')+' onchange="window.plugin.dh_coverage.toggleSettings(this.name)" />Use key info to extend coverage</label></div>';
+    if (self.haveLiveInventoryPlugin)
+      html += '<div><label><input type="checkbox" name="extendByLiveInventoryPlugin" '+(this.settings.extendByLiveInventoryPlugin ? 'checked' : '')+' onchange="window.plugin.dh_coverage.toggleSettings(this.name)" />Use LiveInventory key info to extend coverage</label></div>';
+    if (self.haveKeysPlugin)
+      html += '<div><label><input type="checkbox" name="extendByKeysPlugin" '+(this.settings.extendByKeysPlugin ? 'checked' : '')+' onchange="window.plugin.dh_coverage.toggleSettings(this.name)" />Use Key Plug-in info to extend coverage</label></div>';
     html += '<div><label><input type="checkbox" name="assumeKeys" '+(this.settings.assumeKeys ? 'checked' : '')+' onchange="window.plugin.dh_coverage.toggleSettings(this.name)" />Assume keys are available to extend coverage. WARNING! runs slowly</label></div>';
     for (const cellType in this.settings.cellColouring) {
       if (cellType !== 'outside')
@@ -1327,16 +1451,15 @@ window.plugin.dh_coverage = {
   toggleSettings(name) {
     this.settings[name] = !this.settings[name];
     if (this.plotReachable) {
-      if (name === 'extendByKey' || name === 'assumeKeys') {
+      if (name === 'extendByKeysPlugin' || name === 'extendByLiveInventoryPlugin' || name === 'assumeKeys') {
         if (!this.settings[name] && confirm('Restart coverage without keys (select OK) or leave any jumps relying on keys in the coverage?')) {
-          this.findDroneView(this.currentLocation);
+          this.startCoverage(this.currentLocation);
         } else {
           if (this.settings[name]) {
             this.updateReachable(portals);
             this.keyCheck();
             this.drawReachable();
           }
-
         }
       }
     }
@@ -1446,18 +1569,18 @@ window.plugin.dh_coverage = {
       this.plotReachable = true;
       this.currentLocation = this.currentLocationMarker.getLatLng();
       localStorage['plugin-droneHelper-currentLocation'] = JSON.stringify(this.currentLocation);//{lat:window.plugin.distanceToPortal.currentLoc.lat, lng:window.plugin.distanceToPortal.currentLoc.lng});
-      this.findDroneView(this.currentLocation);
+      this.startCoverage(this.currentLocation);
     })
     map.addLayer(this.currentLocationMarker);
   },
 
-  findDroneView: function(coords) {
+  startCoverage: function(coords) {
     let visParams = window.plugin.dh_view.visibilityParams;
 
     this.cellStatus = {}; // expected to be 'visible', 'reachable', 'outside'
     this.portalsWithKeys = {}; // guids - true if key plugin say we have a key for the portal
 
-    let cells = self.findCellsCoveringCircle(coords, visParams.radius, visParams.cellSize, visParams.type);
+    let cells = window.plugin.dh_utility.findCellsCoveringCircle(coords, visParams.radius, visParams.cellSize, visParams.type);
 
     cells.forEach(cell => {
       let corners = cell.getCornerLatLngs();
@@ -1497,7 +1620,7 @@ window.plugin.dh_coverage = {
 
       if (this.cellStatus[cellString].coverage === 'outside') {
         // if we have access to key data, add a portal we have keys for to the list
-        if (plugin.keys && plugin.keys.keys[key] > 0 || this.settings.assumeKeys) {
+        if ((this.settings.extendByLiveInventoryPlugin && window.plugin.dh_utility.getPortalHasKey(key,'liveInventory')) || (this.settings.extendByKeysPlugin && window.plugin.dh_utility.getPortalHasKey(key,'keysPlugin')) || this.settings.assumeKeys) {
           this.portalsWithKeys[key] = value;
         }
         continue;
@@ -1505,7 +1628,7 @@ window.plugin.dh_coverage = {
 
       if (self.DEBUG) self.compareCoverage(value._latlng)
 
-      let newCells = self.findCellsCoveringCircle(value._latlng, radius, cellSize, type);
+      let newCells = window.plugin.dh_utility.findCellsCoveringCircle(value._latlng, radius, cellSize, type);
       newCells.forEach(cell => {
         if (cell.visible) {
           let cellString = cell.toString();
@@ -1522,7 +1645,7 @@ window.plugin.dh_coverage = {
    },
 
   keyCheck() {
-    if (!(this.settings.extendByKey || this.settings.assumeKeys)) return;
+    if (!(this.settings.extendByKeysPlugin || this.settings.extendByLiveInventoryPlugin || this.settings.assumeKeys)) return;
 
     const visParams = window.plugin.dh_view.visibilityParams;
     let changed = true;
@@ -1545,7 +1668,7 @@ window.plugin.dh_coverage = {
     if (this.cellStatus[currentCell].coverage !== 'outside') return false;
 
     // this will be any cells that could contain portals a key viewDistance jump away - we could get a few extra portals, but there shouldn't be too many
-    let keyReachableCells = self.findCellsCoveringCircle(portalLatLng, 1250, 16, 'cover');
+    let keyReachableCells = window.plugin.dh_utility.findCellsCoveringCircle(portalLatLng, 1250, 16, 'cover');
     for (const cell of keyReachableCells) {
       // ignore any cells not tagged as visible, as these are neighbours beyond the 1250m
       if (!cell.visible) continue;
@@ -1556,7 +1679,7 @@ window.plugin.dh_coverage = {
       if (!this.cellStatus[testCell] || this.cellStatus[testCell].coverage === 'outside') continue;
 
       for (const [guid,portal] of Object.entries(this.cellStatus[testCell].portals)) {
-        const dist = self.haversineDistance(portalLatLng, portal._latlng);
+        const dist = window.plugin.dh_utility.haversineDistance(portalLatLng, portal._latlng);
         if (dist < 1250) { //if (portalLatLng.distanceTo(portal._latlng) < 1250) {
           this.cellStatus[currentCell].coverage = 'reachable';
           return true;
@@ -1604,9 +1727,9 @@ window.plugin.dh_coverage = {
   },
 
   keyUpdate: function(data) {
-    if (!this.plotReachable || !this.settings.extendByKey) return;
+    if (!this.plotReachable || !this.settings.extendByKeysPlugin) return;
     if (data.count === 0 && confirm('Portal now has no keys. This may cause problems for Drone Coverage - click OK to start new coverage calculation, cancel to ignore key count change')) {
-      this.findDroneView(this.currentLocation);
+      this.startCoverage(this.currentLocation);
       return;
     }
     this.updateReachable({[data.guid]: portals[data.guid]});
@@ -1615,11 +1738,11 @@ window.plugin.dh_coverage = {
   },
 
   refreshAllKeys: function() {
-    if (!this.plotReachable || !this.settings.extendByKey) return;
+    if (!this.plotReachable || !this.settings.extendByKeysPlugin) return;
     if (!confirm('Key plug-in data has changed. This may cause problems for Drone Coverage - click OK to start new coverage calculation, cancel to ignore key count change')) {
       return;
     }
-    this.findDroneView(this.currentLocation);
+    this.startCoverage(this.currentLocation);
   }
 }
 window.plugin.dh_distance = {
@@ -1652,7 +1775,7 @@ window.plugin.dh_distance = {
     if (this.startPortal == null || this.startPortal === {}) return;
 
     // use a value of Earth's polar radius, as this is consistent with all observations in scanner made so far
-    let haversine = self.haversineDistance(this.startPortal._latlng, portals[guid]._latlng, this.earthRadius);
+    let haversine = window.plugin.dh_utility.haversineDistance(this.startPortal._latlng, portals[guid]._latlng, this.earthRadius);
 
     if (haversine > 2000)
       haversine = Math.floor(haversine/1000);
@@ -1704,13 +1827,21 @@ self.createOptionsDialog = function() {
 }
 
 var setup = function() {
-  window.plugin.droneHelper.isSmart = window.isSmartphone();
-  window.plugin.droneHelper.createOptionsDialog();
+  self.isSmart = window.isSmartphone();
+  self.createOptionsDialog();
 
   const dhControlHtml = '<div id="dh-controls" style=""><div id="dh-visitcount"></div><div id="dh-distance"></div><div id="dh-portal-info"></div><div id="dh-toolbox"></div></div>';
   $('#portaldetails').after(dhControlHtml);
   $('#dh-toolbox').append('<span style="padding:5px;;white-space: nowrap"><a id="dh-options" onclick="$(\'[aria-describedby=&quot;dialog-dh-options&quot;]\').show();">DroneHelper Opt</a></span> ');
   //$('#dh-controls>a').css({padding: "5px",marginTop: "3px",marginBottom: "3px"});
+
+  self.haveKeysPlugin = !!plugin.keys
+  self.haveLiveInventoryPlugin = !!plugin.LiveInventory
+
+  window.plugin.dh_utility.updateKeyOwnership()
+
+  window.addHook('pluginKeysUpdateKey', window.plugin.dh_utility.addKeysPluginInfo);
+  window.addHook('pluginKeysRefreshAll', window.plugin.dh_utility.addKeysPluginInfo);
 
 
   window.plugin.dh_visits.setup();
@@ -1719,7 +1850,7 @@ var setup = function() {
   window.plugin.dh_coverage.setup();
   window.plugin.dh_distance.setup();
 
-  window.plugin.droneHelper.setupCSS();
+  self.setupCSS();
 
 
 }
