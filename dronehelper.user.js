@@ -2,7 +2,7 @@
 // @id             iitc-plugin-drone-helper@azrael-42
 // @name           IITC plugin: Drone Helper
 // @category       Misc
-// @version        0.5.3
+// @version        0.5.3.1
 // @updateURL      https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @downloadURL    https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js
 // @homepageURL    https://github.com/azrael-42/IITC-Drone-Helper/
@@ -688,23 +688,9 @@ window.plugin.dh_utility = {
       this.liveInventoryTimeout = 400
       const keyCount = plugin.LiveInventory.keyCount;
       keyCount.forEach(portal => {
-        if (this.portalsWithKeys[portal.portalCoupler.portalGuid]) {
-          if (!this.portalsWithKeys[portal.portalCoupler.portalGuid]) {
-            this.portalsWithKeys[portal.portalCoupler.portalGuid].liveInventory = true
-            keysChanged = true;
-          }
-        } else {
-          this.portalsWithKeys[portal.portalCoupler.portalGuid] = {liveInventory: true}
+        if (this.setPortalHasKey(portal.portalCoupler.portalGuid, 'liveInventory'))
           keysChanged = true;
-        }
       })
-      // for (var i = 0; i < keyCount.length; i++) {
-      //   if (this.portalsWithKeys[keyCount[i].portalCoupler.portalGuid]) {
-      //     this.portalsWithKeys[keyCount[i].portalCoupler.portalGuid].liveInventory = true
-      //   } else {
-      //     this.portalsWithKeys[keyCount[i].portalCoupler.portalGuid] = {liveInventory: true}
-      //   }
-      // }
       if (keysChanged)
         runHooks('dh_keysChanged', '')
     }
@@ -1167,7 +1153,7 @@ window.plugin.dh_route = {
         colour = this.jumpColours.tooLong;
       else if (window.plugin.dh_utility.isPortalVisible(startPortal._latlng, endPortal._latlng))
         colour = this.jumpColours.normalJump;
-      else if ((this.settings.useLiveInventoryKeys && window.plugin.dh_utility.getPortalHasKey(endPortal.guid, 'liveInventory')) || (this.settings.useKeysPluginKeys && self.getPortalHasKey(endPortal.guid, 'keysPlugin'))) {
+      else if ((this.settings.useLiveInventoryKeys && window.plugin.dh_utility.getPortalHasKey(endPortal.guid, 'liveInventory')) || (this.settings.useKeysPluginKeys && window.plugin.dh_utility.getPortalHasKey(endPortal.guid, 'keysPlugin'))) {
         colour = this.jumpColours.usesOwnedKey;
       } else {
         colour = this.jumpColours.needsKey;
