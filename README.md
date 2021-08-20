@@ -3,6 +3,12 @@
 #### Installation
 * Requires [IITC CE](https://iitc.app/). 
 * Use this link to [install Drone Helper](https://github.com/azrael-42/IITC-Drone-Helper/raw/main/dronehelper.user.js).
+* If it does not install automatically on IITC Mobile: 
+  1. Download the file you get from the link above.
+  2. In IITC, choose "Plugins" from the top right menu, then "Add external plugins" from the top right menu of the next page. If you have not added non-standard plugins before, IITC will probably ask for permission to access files on the device. 
+  3. Once this is done, choose "dronehelper.user.js" from the file picker - you will need to look in your download directory. 
+  4. Click OK when asked if you want to install it, 
+  5. Enable Drone Helper from the Misc category of User plugins.
 * Can use information about keys from [LiveInventory](https://github.com/EisFrei/IngressLiveInventory/) of the Keys plug-in available on the IITC site. (LiveInventory requires active C.O.R.E. subscription)
 
 #### Unique Portals Drone Visited:
